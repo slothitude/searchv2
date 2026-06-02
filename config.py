@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     confidence_decay_enabled: bool = True
     confidence_decay_check_interval: int = 3600
     re_verification_threshold: float = 0.5
+    min_claim_confidence: float = 0.3
 
     # Skills
     skill_detection_threshold: int = 5

@@ -85,7 +85,11 @@ class KnowledgeGraph:
         claim_value: str,
         confidence: float = 0.5,
         decay_rate: float = 0.001,
-    ) -> Claim:
+    ) -> Claim | None:
+        # Reject claims below minimum confidence threshold
+        if confidence < settings.min_claim_confidence:
+            return None
+
         entity = await self.add_entity(entity_name)
 
         existing = await self.db.execute(

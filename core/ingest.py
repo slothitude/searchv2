@@ -78,13 +78,49 @@ Only extract entities with at least one claim. Max 10 entities. Return JSON only
     return _extract_knowledge_regex(text, source_url)
 
 
+def _clean_entity_name(name: str, url: str = "") -> str:
+    """Clean an entity name: truncate, remove noise suffixes, strip boilerplate."""
+    name = name.strip()
+    # Strip common noise suffixes from page titles
+    for pattern in (
+        r'\s*[|·•–—]\s*.*$',         # Pipe/dot/dash-separated metadata ("Title | Site")
+        r'\s*[-—]\s*.*$',            # Dash-separated subtitles
+        r'\s*\(.*$',                # Parenthetical suffixes "(BABA) Stock Price..."
+        r'\s*Stock Price.*$',        # Stock page noise
+        r'\s*\d{4}\s*\|.*$',        # Year + pipe metadata
+        r'\s*-\s*(DEV|BetterLink|Blog|HomeLab|Apatero|Yahoo).*$',
+                                    # Known site name suffixes
+    ):
+        cleaned = re.sub(pattern, '', name).strip()
+        if cleaned and len(cleaned) >= 3:
+            name = cleaned
+    # Truncate to 60 chars at word boundary
+    if len(name) > 60:
+        name = re.sub(r'\s+\S*$', '', name[:60])
+    # Strip leading/trailing punctuation and HTML entities
+    name = name.strip('\'"»«.,;:!?()- ')
+    name = re.sub(r'&#?\w+;', '', name).strip()
+    if len(name) < 3:
+        # Fallback to domain
+        domain = url.split("//")[-1].split("/")[0].replace("www.", "") if url else "unknown"
+        name = domain
+    return name
+
+
 def _extract_knowledge_regex(text: str, source_url: str) -> list[dict]:
     """Regex-based fallback: extract key sentences as claims about a page entity."""
     # Split into sentences, filter noise
     sentences = re.split(r'[.!?]\s+', text)
     # Skip UI boilerplate, short fragments, code blocks
-    noise_markers = ("copy", "share", "subscribe", "cookie", "login", "sign up",
-                     "advertisement", "related posts", "tags:", "```", "http://", "https://")
+    noise_markers = (
+        "copy", "share", "subscribe", "cookie", "login", "sign up",
+        "advertisement", "related posts", "tags:", "```", "http://", "https://",
+        "copied to clipboard", "share to", "share on", "share post",
+        "buy me a coffee", "skip to", "main content", "table of contents",
+        "try our new", "try alpha", "introducing alpha", "trade on coinbase",
+        "trading disclosure", "yahoo finance is not", "loading...",
+        "photo by", "on unsplash", "welcome to", "documented tutorials",
+    )
     candidates = [
         s.strip()
         for s in sentences
@@ -96,12 +132,8 @@ def _extract_knowledge_regex(text: str, source_url: str) -> list[dict]:
     # Derive entity name from URL domain
     domain = source_url.split("//")[-1].split("/")[0].replace("www.", "")
     title_match = re.search(r'^#?\s*(.+)', text, re.MULTILINE)
-    entity_name = title_match.group(1).strip()[:100] if title_match else domain
-
-    # Clean entity name — remove trailing noise
-    entity_name = re.sub(r'\s*[-|]\s*.*$', '', entity_name).strip()
-    if not entity_name:
-        entity_name = domain
+    raw_name = title_match.group(1).strip()[:200] if title_match else domain
+    entity_name = _clean_entity_name(raw_name, source_url)
 
     claims = []
     for i, sentence in enumerate(candidates):
@@ -120,6 +152,12 @@ def _extract_knowledge_regex(text: str, source_url: str) -> list[dict]:
             # Fallback: first few meaningful words
             words = [w for w in sentence.split() if len(w) > 3 and w[0].islower()]
             key = "_".join(words[:3]).lower() if words else f"fact_{i}"
+
+        # Skip if key looks like garbage (nav/footer boilerplate)
+        if key in ("copy", "copy_link", "copied", "share", "summary", "with_ollama",
+                    "here", "three_privacy", "your", "after", "no", "the", "if",
+                    "works", "fact_0", "fact_1", "fact_2", "fact_3"):
+            continue
 
         claims.append({
             "key": key,
@@ -222,7 +260,7 @@ async def ingest(
             knowledge = await _extract_knowledge(text, url, model=model)
 
         for item in knowledge:
-            entity_name = item.get("entity", "").strip()
+            entity_name = _clean_entity_name(item.get("entity", ""), url=url)
             entity_type = item.get("type", "thing")
             claims = item.get("claims", [])
 
@@ -235,13 +273,22 @@ async def ingest(
             total_entities += 1
             ingested_entities.append(entity_name)
 
-            # Add claims
+            # Add claims — skip low-confidence noise
             for c in claims:
-                key = c.get("key", "")
-                value = c.get("value", "")
+                key = c.get("key", "").strip()
+                value = c.get("value", "").strip()
                 conf = c.get("confidence", 0.5)
 
-                if not key or not value:
+                # Skip empty, too-short keys, or garbage values
+                if not key or not value or len(key) < 3 or len(value) < 10:
+                    continue
+                # Skip if value is just nav/footer boilerplate
+                if any(skip in value.lower() for skip in (
+                    "copied to clipboard", "share to x", "share on linkedin",
+                    "share on facebook", "buy me a coffee", "copy link",
+                    "share post via", "try alpha", "trade on coinbase",
+                    "trading disclosure", "loading...", "photo by",
+                )):
                     continue
 
                 claim = await kg.add_claim(
@@ -251,8 +298,9 @@ async def ingest(
                     claim_value=str(value)[:2000],
                     confidence=max(0.1, min(1.0, conf)),
                 )
-                total_claims += 1
-                ingested_claims.append({"entity": entity_name, "key": key, "id": claim.id})
+                if claim:
+                    total_claims += 1
+                    ingested_claims.append({"entity": entity_name, "key": key, "id": claim.id})
 
     # Step 4: Store episodic memory of this ingest
     await ms.add_memory(

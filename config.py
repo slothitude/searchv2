@@ -64,11 +64,11 @@ class Settings(BaseSettings):
         "Guardian Australia": "https://www.theguardian.com/au/rss",
         "Google News AU": "https://news.google.com/rss?hl=en-AU&gl=AU&ceid=AU:en",
         "SBS News": "https://www.sbs.com.au/news/feed",
-        "Sky News AU": "https://feeds.skynews.com.au/rss.xml",
-        "9News": "https://feeds.9news.com.au/rss",
-        "SMH": "https://www.smh.com.au/rss/headlines.xml",
-        "The Age": "https://www.theage.com.au/rss/headlines.xml",
-        "news.com.au": "https://www.news.com.au/rss",
+        "9News": "https://www.9news.com.au/rss",
+        "BBC Australia": "https://feeds.bbci.co.uk/news/world/australia/rss.xml",
+        "Crikey": "https://www.crikey.com.au/feed/",
+        "7News": "https://7news.com.au/rss",
+        "Perth Now": "https://www.perthnow.com.au/news/rss",
     }
     rss_poll_interval: int = 3600  # seconds between RSS polls
 

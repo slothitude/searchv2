@@ -3,6 +3,7 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from mcp.server.fastmcp import FastMCP
 
 from models.base import async_session, init_db
@@ -20,6 +21,7 @@ from core.ingest import ingest
 from core.queue import worker as queue_worker
 from core.rss import store as rss_store, fetch_all, ingest_uningested, poller as rss_poller
 from core.curiosity import scheduler as curiosity_scheduler
+from core.belief import scheduler as belief_scheduler
 from models.queue import QueueStore
 
 @asynccontextmanager
@@ -28,13 +30,15 @@ async def lifespan(server):
     await queue_worker.start()
     await rss_poller.start()
     await curiosity_scheduler.start()
+    await belief_scheduler.start()
     yield
+    await belief_scheduler.stop()
     await curiosity_scheduler.stop()
     await rss_poller.stop()
     await queue_worker.stop()
 
 
-mcp = FastMCP("SearchV2", instructions="Knowledge acquisition system with Tome vault, observation, missions, knowledge graph, multi-layer retrieval, skills, and RSS feeds.", lifespan=lifespan)
+mcp = FastMCP("SearchV2", instructions="Knowledge acquisition system with Tome vault, observation, missions, knowledge graph, multi-layer retrieval, skills, RSS feeds, and belief propagation.", lifespan=lifespan)
 
 
 # ── Tome (5 tools) ──────────────────────────────────────────
@@ -588,6 +592,122 @@ async def curiosity_trigger() -> str:
         "skipped": result.skipped,
         "scan_counts": result.scan_counts,
     }, indent=2, default=str)
+
+
+# ── Belief Propagation (4 tools) ─────────────────────────
+
+@mcp.tool()
+async def belief_propagate() -> str:
+    """Force immediate belief propagation sweep. Detects contradictions, resolves them, propagates confidence through the entity relationship graph, and triggers curiosity re-ingest on significant shifts."""
+    result = await belief_scheduler.trigger()
+    return json.dumps({
+        "timestamp": result.timestamp.isoformat(),
+        "contradictions_found": result.contradictions_found,
+        "contradictions_resolved": result.contradictions_resolved,
+        "entities_affected": result.entities_affected,
+        "curiosity_triggered": result.curiosity_triggered,
+        "phase_stats": result.phase_stats,
+    }, indent=2, default=str)
+
+
+@mcp.tool()
+async def belief_contradictions(resolved: bool = False, entity: str = "",
+                                limit: int = 50) -> str:
+    """List contradictions with details. Filter by resolved status and entity."""
+    async with async_session() as db:
+        from sqlalchemy import select
+        from models.knowledge import Contradiction, Entity, Claim as ClaimModel
+
+        q = select(Contradiction)
+        if not resolved:
+            q = q.where(Contradiction.resolved == False)
+        if entity:
+            ent = await db.execute(select(Entity).where(Entity.name == entity))
+            ent_obj = ent.scalar_one_or_none()
+            if ent_obj:
+                q = q.where(Contradiction.entity_id == ent_obj.id)
+        q = q.order_by(Contradiction.created_at.desc()).limit(limit)
+
+        result = await db.execute(q)
+        contradictions = result.scalars().all()
+        if not contradictions:
+            return "No contradictions found"
+
+        out = []
+        for c in contradictions:
+            claim_a = await db.get(ClaimModel, c.claim_a_id)
+            claim_b = await db.get(ClaimModel, c.claim_b_id)
+            ent = await db.get(Entity, c.entity_id)
+            out.append({
+                "id": c.id,
+                "entity": ent.name if ent else "unknown",
+                "claim_a": {"id": c.claim_a_id, "key": claim_a.claim_key if claim_a else "?",
+                           "value": claim_a.claim_value[:100] if claim_a else "?",
+                           "confidence": claim_a.confidence if claim_a else 0},
+                "claim_b": {"id": c.claim_b_id, "key": claim_b.claim_key if claim_b else "?",
+                           "value": claim_b.claim_value[:100] if claim_b else "?",
+                           "confidence": claim_b.confidence if claim_b else 0},
+                "type": c.contradiction_type,
+                "severity": c.severity,
+                "resolved": c.resolved,
+                "winner_claim_id": c.winner_claim_id,
+                "method": c.method,
+            })
+        return json.dumps(out, indent=2, default=str)
+
+
+@mcp.tool()
+async def belief_status() -> str:
+    """Show last belief propagation sweep results."""
+    sweep = belief_scheduler._last_sweep
+    if not sweep:
+        return "No sweeps have run yet. Use belief_propagate() for a manual sweep."
+    return json.dumps({
+        "timestamp": sweep.timestamp.isoformat(),
+        "contradictions_found": sweep.contradictions_found,
+        "contradictions_resolved": sweep.contradictions_resolved,
+        "entities_affected": sweep.entities_affected,
+        "curiosity_triggered": sweep.curiosity_triggered,
+        "phase_stats": sweep.phase_stats,
+    }, indent=2, default=str)
+
+
+@mcp.tool()
+async def belief_resolve(contradiction_id: int, winner_claim_id: int) -> str:
+    """Manual resolution override for a contradiction."""
+    async with async_session() as db:
+        from models.knowledge import Contradiction, Claim as ClaimModel
+
+        contra = await db.get(Contradiction, contradiction_id)
+        if not contra:
+            return f"Contradiction not found: {contradiction_id}"
+        if contra.resolved:
+            return f"Contradiction #{contradiction_id} already resolved (method: {contra.method})"
+
+        winner = await db.get(ClaimModel, winner_claim_id)
+        if not winner:
+            return f"Claim not found: {winner_claim_id}"
+
+        loser_id = contra.claim_b_id if winner_claim_id == contra.claim_a_id else contra.claim_a_id
+        loser = await db.get(ClaimModel, loser_id)
+        if loser:
+            winner.confidence = min(1.0, winner.confidence + loser.confidence * 0.3)
+            loser.confidence *= 0.5
+            loser.disputed = True
+            winner.updated_at = datetime.now(timezone.utc)
+            loser.updated_at = datetime.now(timezone.utc)
+
+        contra.resolved = True
+        contra.winner_claim_id = winner_claim_id
+        contra.method = "manual"
+        await db.commit()
+
+        return json.dumps({
+            "contradiction_id": contradiction_id,
+            "winner_claim_id": winner_claim_id,
+            "loser_claim_id": loser_id,
+            "method": "manual",
+        }, indent=2)
 
 
 if __name__ == "__main__":

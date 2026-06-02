@@ -6,6 +6,7 @@ from models.knowledge import (
     Entity, Relationship, Claim, Memory, Escalation
 )
 from config import settings
+from core.events import bus
 
 
 class KnowledgeGraph:
@@ -109,6 +110,11 @@ class KnowledgeGraph:
             claim.evidence_count += 1
             claim.last_verified = datetime.now(timezone.utc)
             claim.updated_at = datetime.now(timezone.utc)
+            await bus.publish("belief.claim_updated", {
+                "entity_id": entity.id, "entity_name": entity.name,
+                "claim_id": claim.id, "claim_key": claim_key,
+                "confidence": claim.confidence,
+            })
         else:
             claim = Claim(
                 entity_id=entity.id,

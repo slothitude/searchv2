@@ -123,6 +123,42 @@ class Embedding(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class Contradiction(Base):
+    __tablename__ = "contradictions"
+
+    id = Column(Integer, primary_key=True)
+    entity_id = Column(Integer, ForeignKey("entities.id"), nullable=False)
+    claim_a_id = Column(Integer, ForeignKey("claims.id"), nullable=False)
+    claim_b_id = Column(Integer, ForeignKey("claims.id"), nullable=False)
+    contradiction_type = Column(String(32), default="semantic")  # key_collision, value_conflict, semantic
+    severity = Column(Float, default=0.5)
+    resolved = Column(Boolean, default=False)
+    winner_claim_id = Column(Integer, nullable=True)
+    method = Column(String(32), default="")  # evidence, last_verified, confidence, llm_judge
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    entity = relationship("Entity")
+    claim_a = relationship("Claim", foreign_keys=[claim_a_id])
+    claim_b = relationship("Claim", foreign_keys=[claim_b_id])
+
+
+class PropagationLog(Base):
+    __tablename__ = "propagation_log"
+
+    id = Column(Integer, primary_key=True)
+    source_entity_id = Column(Integer, ForeignKey("entities.id"), nullable=False)
+    target_entity_id = Column(Integer, ForeignKey("entities.id"), nullable=False)
+    relationship_id = Column(Integer, nullable=True)
+    relation_type = Column(String(128), default="related")
+    delta = Column(Float, default=0.0)
+    reason = Column(String(256), default="")
+    sweep_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    source_entity = relationship("Entity", foreign_keys=[source_entity_id])
+    target_entity = relationship("Entity", foreign_keys=[target_entity_id])
+
+
 class Escalation(Base):
     __tablename__ = "escalations"
 

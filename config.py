@@ -75,6 +75,16 @@ class Settings(BaseSettings):
     rss_max_retries: int = 3
     rss_disable_after_errors: int = 10
 
+    # Belief Propagation
+    belief_enabled: bool = True
+    belief_interval: int = 1800              # 30 min between sweeps
+    belief_max_hops: int = 4
+    belief_damping: float = 0.5
+    belief_min_delta: float = 0.01
+    belief_max_llm_checks: int = 10
+    belief_contradiction_llm_threshold: float = 0.6
+    belief_curiosity_threshold: float = 0.15
+
     # Curiosity
     curiosity_enabled: bool = True
     curiosity_interval: int = 600           # seconds between scans (10 min)

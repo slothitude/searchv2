@@ -312,21 +312,21 @@ async def ingest(
 
     # Step 5: Index embeddings
     indexed = {"entities": 0, "claims": 0}
-    if index_embeddings and total_entities > 0:
-        # Index all entities (they were just created/updated)
+    if index_embeddings and ingested_entities:
+        # Only index entities just created in this batch
         from sqlalchemy import select
         from models.knowledge import Entity
 
-        r = await db.execute(select(Entity))
+        entity_names = list(set(ingested_entities))
+        r = await db.execute(
+            select(Entity).where(Entity.name.in_(entity_names))
+        )
         for entity in r.scalars():
             if not await retriever.has_embedding("entity", entity.id):
                 await retriever.index_entity(entity.id)
                 indexed["entities"] += 1
-
-            # Index claims for entities we just touched
-            if entity.name in set(ingested_entities):
-                await retriever.index_claims_for_entity(entity.id)
-                indexed["claims"] += 1
+            await retriever.index_claims_for_entity(entity.id)
+            indexed["claims"] += 1
 
     await db.commit()
 

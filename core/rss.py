@@ -212,6 +212,9 @@ class RSSPoller:
         self._task: asyncio.Task | None = None
 
     async def start(self):
+        if self._task is not None:
+            log.debug("RSS poller already running")
+            return
         await store.init_feeds(settings.rss_feeds)
         self._task = asyncio.create_task(self._loop())
         log.info("RSS poller started (interval %ds)", settings.rss_poll_interval)

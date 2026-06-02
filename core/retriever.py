@@ -1,5 +1,6 @@
 """Multi-layer ContextRetriever: lexical + semantic + graph + fact search with reranking."""
 
+import asyncio
 import math
 import json
 import re
@@ -85,12 +86,9 @@ async def get_embedding(text: str) -> list[float]:
 
 
 async def get_embedding_batch(texts: list[str]) -> list[list[float]]:
-    """Get embeddings for multiple texts sequentially."""
-    vectors = []
-    for text in texts:
-        vec = await get_embedding(text)
-        vectors.append(vec)
-    return vectors
+    """Get embeddings for multiple texts concurrently."""
+    tasks = [get_embedding(text) for text in texts]
+    return await asyncio.gather(*tasks)
 
 
 # ── Scoring weights ─────────────────────────────────────────
@@ -174,19 +172,33 @@ class ContextRetriever:
     async def _search_semantic(
         self, query: str, query_vec: list[float], limit: int = 20
     ) -> list[dict]:
-        """Find embeddings similar to query vector."""
+        """Find embeddings similar to query vector using numpy batch computation."""
         if not query_vec:
             return []
 
-        results = []
         r = await self.db.execute(select(Embedding))
-        for emb in r.scalars():
-            stored_vec = json.loads(emb.vector)
-            sim = cosine_similarity(query_vec, stored_vec)
-            if sim > 0.3:  # threshold
+        embeddings = list(r.scalars())
+        if not embeddings:
+            return []
+
+        import numpy as np
+
+        stored_vecs = np.array([json.loads(e.vector) for e in embeddings])
+        query_np = np.array(query_vec)
+
+        # Batch cosine similarity
+        dots = stored_vecs @ query_np
+        mags = np.linalg.norm(stored_vecs, axis=1) * np.linalg.norm(query_np)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            sims = np.where(mags > 0, dots / mags, 0.0)
+
+        threshold = 0.3
+        results = []
+        for i, emb in enumerate(embeddings):
+            if sims[i] > threshold:
                 results.append({
                     "type": emb.target_type, "id": emb.target_id,
-                    "score": sim,
+                    "score": round(float(sims[i]), 4),
                     "snippet": emb.text[:200],
                 })
 

@@ -86,24 +86,24 @@ class ContextRetriever:
 
 ### HIGH — Architecture
 
-- [ ] **Dual lifespan creates duplicate workers** — `app.py` and `mcp_server.py` both start queue_worker and RSS poller. If both servers run simultaneously, duplicate job processing and duplicate RSS ingestion. Ensure only one runs at a time (check `worker._task is None` before starting, or use a singleton flag).
-- [ ] **Infinite retry loop for broken articles** — `core/rss.py:ingest_article` returns False but article stays `ingested=False`. On next poll it gets re-enqueued forever. Add a retry counter (max 3 attempts), then mark as ingested to stop the loop.
+- [x] **Dual lifespan creates duplicate workers** — `app.py` and `mcp_server.py` both start queue_worker and RSS poller. Fixed: guard `start()` with `if self._task is not None: return` in both `QueueWorker` and `RSSPoller`.
+- [x] **Infinite retry loop for broken articles** — `core/rss.py:ingest_article` returns False but article stays `ingested=False`. Fixed: added `retry_count` column to `RSSArticle`, `mark_ingest_failed()` increments it, marks `ingested=True` after `rss_max_retries` (default 3). `get_uningested()` filters by `retry_count < max`.
 
 ### HIGH — Performance
 
-- [ ] **Full table scan for semantic search** — `core/retriever.py:182`. Loads every embedding, deserializes JSON vectors, computes cosine similarity in Python. Won't scale past a few hundred embeddings. Switch to a vector index (numpy array, or FAISS/HNSW) or at minimum a numpy matrix for batch cosine similarity.
-- [ ] **Full table scan for decay check** — `core/knowledge.py:188`. `select(Claim)` with no WHERE. Add WHERE clause on `last_verified` and pagination.
-- [ ] **`index_all` scans all entities after ingest** — `core/ingest.py:317-329`. Only index entities just created in this batch, not the entire table.
-- [ ] **`get_embedding_batch` is sequential** — `core/retriever.py:87-93`. N sequential HTTP requests to Ollama. Use `asyncio.gather` or Ollama's batch embedding API.
-- [ ] **N+1 queries in FeedStore.list_feeds** — `models/rss.py:51-72`. Separate COUNT per feed. Use JOIN or subquery.
-- [ ] **N+1 queries in FeedStore.list_articles** — `models/rss.py:129-159`. Separate query per feed_id. Use JOIN.
+- [x] **Full table scan for semantic search** — `core/retriever.py:182`. Fixed: replaced Python loop with numpy batch cosine similarity (`stored_vecs @ query_np`).
+- [x] **Full table scan for decay check** — `core/knowledge.py:188`. Fixed: added WHERE clause filtering claims with `last_verified` older than computed cutoff.
+- [x] **`index_all` scans all entities after ingest** — `core/ingest.py:317-329`. Fixed: only indexes entities just created in this batch via `Entity.name.in_(ingested_entities)`.
+- [x] **`get_embedding_batch` is sequential** — `core/retriever.py:87-93`. Fixed: uses `asyncio.gather` for concurrent embedding requests.
+- [x] **N+1 queries in FeedStore.list_feeds** — `models/rss.py:51-72`. Fixed: single GROUP BY query for article counts, then join in Python.
+- [x] **N+1 queries in FeedStore.list_articles** — `models/rss.py:129-159`. Fixed: single query loads all feeds, then lookup from map.
 
 ### MEDIUM — Reliability
 
-- [ ] **SQLite DB path is relative** — `config.py:11`. `data/searchv2.db` depends on working directory. Resolve relative to `data_dir` setting.
-- [ ] **No retry/backoff for failing feeds** — `core/rss.py`. `error_count` increments but feed never gets disabled. Auto-disable after N consecutive errors (e.g., 10).
-- [ ] **Event bus has no cleanup for dead subscribers** — `core/events.py`. Dropped SSE connections leak subscriber queues forever. Add TTL or periodic cleanup.
+- [x] **SQLite DB path is relative** — `config.py:11`. Fixed: `model_validator` resolves `data_dir` to absolute, `models/base.py` derives db_url from resolved path.
+- [x] **No retry/backoff for failing feeds** — `core/rss.py`. Fixed: `update_feed_fetched()` auto-disables feed after `rss_disable_after_errors` (default 10) consecutive errors.
+- [x] **Event bus has no cleanup for dead subscribers** — `core/events.py`. Fixed: subscribers have TTL (30 min), `publish()` calls `_cleanup_stale()` to remove expired entries.
 - [ ] **Prompt injection via article content** — `core/ingest.py:53-63`. Malicious articles could manipulate LLM extraction. Sanitize or truncate aggressively.
-- [ ] **`export_to_tome` HTML injection** — `mcp_server.py:290-303`. Entity/claim values interpolated raw into HTML. Use HTML escaping.
-- [ ] **`_extract_title` doesn't decode HTML entities** — `core/extractor.py:75`. `&amp;` etc. appear raw. Use `html.unescape()`.
+- [x] **`export_to_tome` HTML injection** — `mcp_server.py:290-303`. Fixed: all entity/claim values wrapped with `html.escape()`.
+- [x] **`_extract_title` doesn't decode HTML entities** — `core/extractor.py:75`. Fixed: uses `html.unescape()` on extracted title.
 

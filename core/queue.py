@@ -10,6 +10,7 @@ from core.ingest import ingest
 from core.rss import ingest_article
 from models.queue import QueueStore
 from models.rss import RSSArticle
+from models.rss import FeedStore
 from sqlalchemy import select
 from models.base import async_session
 from config import settings
@@ -27,6 +28,9 @@ class QueueWorker:
     async def start(self):
         if not settings.queue_enabled:
             log.info("Queue disabled by config")
+            return
+        if self._task is not None:
+            log.debug("Queue worker already running")
             return
         # Crash recovery: reset any stranded running jobs
         reset_count = await self.store.reset_running()
@@ -105,8 +109,23 @@ class QueueWorker:
                         article = None
                 if article:
                     ok = await ingest_article(article)
-                    await self.store.update_status(job.id, "done",
-                                                  result={"ingested": ok, "title": job.query})
+                    if ok:
+                        await self.store.update_status(job.id, "done",
+                                                      result={"ingested": True, "title": job.query})
+                    else:
+                        feed_store = FeedStore()
+                        should_retry = await feed_store.mark_ingest_failed(article.id)
+                        if should_retry:
+                            await self.store.update_status(job.id, "done",
+                                                          result={"ingested": False, "retry": article.retry_count,
+                                                                  "title": job.query})
+                        else:
+                            log.warning("Article '%s' failed %d times, permanently skipped",
+                                        article.title[:80], article.retry_count)
+                            await self.store.update_status(job.id, "done",
+                                                          result={"ingested": False, "permanently_failed": True,
+                                                                  "retries": article.retry_count,
+                                                                  "title": job.query})
                 else:
                     await self.store.update_status(job.id, "done",
                                                   result={"skipped": True, "reason": "article not found"})

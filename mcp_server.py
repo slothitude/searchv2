@@ -286,20 +286,22 @@ async def export_to_tome(entity_name: str, slug: str = "") -> str:
         if not full:
             return f"Entity not found: {entity_name}"
 
+        import html as html_mod
+        esc = html_mod.escape
         slug = slug or entity_name.lower().replace(" ", "-")
-        html = f"<h1>{full['name']}</h1>\n"
-        html += f"<p>Type: {full['type']}</p>\n"
+        html = f"<h1>{esc(full['name'])}</h1>\n"
+        html += f"<p>Type: {esc(full['type'])}</p>\n"
         if full.get('description'):
-            html += f"<p>{full['description']}</p>\n"
+            html += f"<p>{esc(full['description'])}</p>\n"
         html += "<h2>Claims</h2>\n<ul>\n"
         for c in full.get('claims', []):
-            html += f"<li>{c['key']}: {c['value']} (confidence: {c.get('effective_confidence', c['confidence']):.2f})</li>\n"
+            html += f"<li>{esc(c['key'])}: {esc(c['value'])} (confidence: {c.get('effective_confidence', c['confidence']):.2f})</li>\n"
         html += "</ul>\n<h2>Relationships</h2>\n<ul>\n"
         for r in full.get('relationships', []):
             if r['direction'] == 'outgoing':
-                html += f"<li>{r['type']} → {r['target']}</li>\n"
+                html += f"<li>{esc(r['type'])} → {esc(r['target'])}</li>\n"
             else:
-                html += f"<li>{r['source']} → {r['type']}</li>\n"
+                html += f"<li>{esc(r['source'])} → {esc(r['type'])}</li>\n"
         html += "</ul>"
 
         doc = await vault.create_document(slug=slug, title=f"Entity: {entity_name}", source=html)

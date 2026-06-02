@@ -72,7 +72,8 @@ async def fetch_and_extract(url: str, max_length: int = 50000) -> dict:
 
 
 def _extract_title(html: str) -> str:
+    import html as html_mod
     match = re.search(r'<title[^>]*>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
     if match:
-        return match.group(1).strip()
+        return html_mod.unescape(match.group(1).strip())
     return ""

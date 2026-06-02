@@ -185,7 +185,12 @@ class KnowledgeGraph:
     async def check_decay(self) -> list[dict]:
         """Find claims needing re-verification."""
         now = datetime.now(timezone.utc)
-        result = await self.db.execute(select(Claim))
+        cutoff = now - timedelta(days=int(1.0 / (settings.re_verification_threshold * settings.confidence_decay_check_interval / 86400)) + 1)
+        result = await self.db.execute(
+            select(Claim).where(
+                Claim.last_verified.is_(None) | (Claim.last_verified <= cutoff)
+            )
+        )
         decayed = []
         for claim in result.scalars():
             dt = claim.last_verified

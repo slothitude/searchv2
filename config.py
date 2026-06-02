@@ -1,3 +1,4 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pathlib import Path
 
@@ -71,6 +72,14 @@ class Settings(BaseSettings):
         "Perth Now": "https://www.perthnow.com.au/news/rss",
     }
     rss_poll_interval: int = 3600  # seconds between RSS polls
+    rss_max_retries: int = 3
+    rss_disable_after_errors: int = 10
+
+    @model_validator(mode="after")
+    def resolve_paths(self):
+        self.data_dir = self.data_dir.resolve()
+        self.db_url = f"sqlite+aiosqlite:///{self.data_dir}/searchv2.db"
+        return self
 
     model_config = {"env_prefix": "SEARCHV2_"}
 

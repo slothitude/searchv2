@@ -23,7 +23,7 @@ async def call_ollama(
     if system:
         payload["system"] = system
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=240) as client:
         resp = await client.post(
             f"{settings.ollama_base_url}/api/generate",
             json=payload,
@@ -51,7 +51,7 @@ async def call_ollama_chat(
         },
     }
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=240) as client:
         resp = await client.post(
             f"{settings.ollama_base_url}/api/chat",
             json=payload,

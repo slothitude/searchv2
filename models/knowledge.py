@@ -107,6 +107,17 @@ class Memory(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class Embedding(Base):
+    __tablename__ = "embeddings"
+
+    id = Column(Integer, primary_key=True)
+    target_type = Column(String(32), nullable=False)  # entity, claim, document, hypothesis, memory
+    target_id = Column(Integer, nullable=False)
+    text = Column(Text, nullable=False)  # the text that was embedded
+    vector = Column(Text, nullable=False)  # JSON array of floats
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class Escalation(Base):
     __tablename__ = "escalations"
 

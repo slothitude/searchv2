@@ -502,7 +502,6 @@ async def rss_refresh(feed_name: str = "") -> str:
         feed = await rss_store.get_feed_by_name(feed_name)
         if not feed:
             return f"Feed not found: {feed_name}"
-        # Fetch just this feed by temporarily disabling others
         from core.rss import fetch_feed
         articles = await fetch_feed(feed.url)
         new_count = 0
@@ -519,6 +518,20 @@ async def rss_refresh(feed_name: str = "") -> str:
         result = {"feed": feed_name, "total": len(articles), "new": new_count}
     else:
         result = await fetch_all()
+
+    # Enqueue new articles + self-learning follow-up searches
+    if result.get("total_new", 0) > 0:
+        from core.rss import RSSPoller
+        poller = RSSPoller()
+        articles = await rss_store.get_uningested(limit=10)
+        for article in articles:
+            await _store.enqueue("rss_ingest", f"RSS: {article.title[:80]}",
+                                 params={"article_id": article.id, "url": article.url,
+                                         "title": article.title}, priority=0.3)
+        await poller._enqueue_followup_searches(articles, _store)
+        result["enqueued_ingest"] = len(articles)
+        result["enqueued_searches"] = len(articles)  # approximate
+
     return json.dumps(result, indent=2, default=str)
 
 

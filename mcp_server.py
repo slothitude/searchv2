@@ -402,6 +402,7 @@ async def embedding_status() -> str:
 
 
 if __name__ == "__main__":
-    import uvicorn
     asyncio.run(init_db())
-    mcp.run(transport="sse", host="0.0.0.0", port=7711)
+    mcp.settings.host = "0.0.0.0"
+    mcp.settings.port = 7711
+    mcp.run(transport="streamable-http")

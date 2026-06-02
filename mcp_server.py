@@ -19,6 +19,7 @@ from core.retriever import ContextRetriever
 from core.ingest import ingest
 from core.queue import worker as queue_worker
 from core.rss import store as rss_store, fetch_all, ingest_uningested, poller as rss_poller
+from core.curiosity import scheduler as curiosity_scheduler
 from models.queue import QueueStore
 
 @asynccontextmanager
@@ -26,7 +27,9 @@ async def lifespan(server):
     await init_db()
     await queue_worker.start()
     await rss_poller.start()
+    await curiosity_scheduler.start()
     yield
+    await curiosity_scheduler.stop()
     await rss_poller.stop()
     await queue_worker.stop()
 
@@ -550,6 +553,41 @@ async def rss_articles(feed_name: str = "", limit: int = 20) -> str:
     """List recent RSS articles, optionally filtered by feed."""
     articles = await rss_store.list_articles(feed_name=feed_name, limit=limit)
     return json.dumps(articles, indent=2, default=str) if articles else "No articles"
+
+
+# ── Curiosity (2 tools) ─────────────────────────────────────
+
+@mcp.tool()
+async def curiosity_status() -> str:
+    """Show last curiosity scan results, findings, queued/skipped counts."""
+    scan = curiosity_scheduler._last_scan
+    if not scan:
+        return "No scans have run yet. Use curiosity_trigger() for a manual scan."
+    return json.dumps({
+        "timestamp": scan.timestamp.isoformat(),
+        "total_findings": len(scan.findings),
+        "queued": scan.queued,
+        "skipped": scan.skipped,
+        "scan_counts": scan.scan_counts,
+    }, indent=2, default=str)
+
+
+@mcp.tool()
+async def curiosity_trigger() -> str:
+    """Force an immediate curiosity scan. Returns findings, queued jobs, and skipped items."""
+    result = await curiosity_scheduler.trigger()
+    return json.dumps({
+        "timestamp": result.timestamp.isoformat(),
+        "total_findings": len(result.findings),
+        "findings": [
+            {"category": f.category, "query": f.query, "reason": f.reason,
+             "priority": f.priority, "job_type": f.job_type}
+            for f in result.findings
+        ],
+        "queued": result.queued,
+        "skipped": result.skipped,
+        "scan_counts": result.scan_counts,
+    }, indent=2, default=str)
 
 
 if __name__ == "__main__":

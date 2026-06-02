@@ -24,3 +24,8 @@ async def init_db():
             await conn.execute(text("ALTER TABLE rss_articles ADD COLUMN retry_count INTEGER DEFAULT 0"))
         except Exception:
             pass  # column already exists
+        # Migration: add created_at to predictions if missing
+        try:
+            await conn.execute(text("ALTER TABLE predictions ADD COLUMN created_at DATETIME"))
+        except Exception:
+            pass

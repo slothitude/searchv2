@@ -5,6 +5,7 @@ from config import settings
 from models.base import init_db
 from core.queue import worker as queue_worker
 from core.rss import poller as rss_poller
+from core.curiosity import scheduler as curiosity_scheduler
 
 
 async def verify_token(request: Request):
@@ -22,7 +23,9 @@ async def lifespan(app: FastAPI):
     await init_db()
     await queue_worker.start()
     await rss_poller.start()
+    await curiosity_scheduler.start()
     yield
+    await curiosity_scheduler.stop()
     await rss_poller.stop()
     await queue_worker.stop()
 

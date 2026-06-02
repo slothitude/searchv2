@@ -62,6 +62,7 @@ class Prediction(Base):
     prediction_text = Column(Text, nullable=False)
     expected_evidence = Column(Text, default="")
     status = Column(String(32), default="pending")  # pending, confirmed, refuted
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     hypothesis = relationship("Hypothesis", back_populates="predictions")
 

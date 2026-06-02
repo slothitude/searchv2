@@ -75,6 +75,20 @@ Knowledge grows based on what the news is talking about
 
 The system discovers what matters and researches it — no human queries needed.
 
+### Curiosity Engine
+
+SearchV2 also proactively fills knowledge gaps without external stimulus. A background scheduler runs 5 scan triggers every 10 minutes:
+
+| Trigger | Signal | Action | Priority |
+|---------|--------|--------|----------|
+| Decayed claims | Confidence below re-verification threshold | Re-ingest entity | 0.8 |
+| Thin hypotheses | Low confidence / no evidence / no predictions | Find supporting evidence | 0.6 |
+| Stale predictions | Pending > 7 days | Search for outcome | 0.5 |
+| Degrading skills | Low success rate after 3+ uses | Refresh domain knowledge | 0.4 |
+| Knowledge deserts | Entity with < 2 claims | Flesh out entity | 0.3 |
+
+Rate-limited to 3 jobs per cycle with dedup across scans (30-min window).
+
 ## Background Queue
 
 Long-running jobs run asynchronously in a persistent queue (stored in SQLite).
@@ -256,7 +270,7 @@ rss_refresh()          # all feeds
 rss_refresh("ABC News")  # single feed
 ```
 
-## MCP Tools (40)
+## MCP Tools (42)
 
 | Category | Tools |
 |----------|-------|
@@ -272,6 +286,7 @@ rss_refresh("ABC News")  # single feed
 | Retriever (3) | `retrieve`, `index_embeddings`, `embedding_status` |
 | Queue (4) | `queue_search`, `queue_ingest`, `queue_status`, `queue_cancel` |
 | RSS (3) | `rss_feeds`, `rss_refresh`, `rss_articles` |
+| Curiosity (2) | `curiosity_status`, `curiosity_trigger` |
 
 ## MCP Setup
 

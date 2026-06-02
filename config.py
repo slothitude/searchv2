@@ -75,6 +75,18 @@ class Settings(BaseSettings):
     rss_max_retries: int = 3
     rss_disable_after_errors: int = 10
 
+    # Curiosity
+    curiosity_enabled: bool = True
+    curiosity_interval: int = 600           # seconds between scans (10 min)
+    curiosity_max_per_cycle: int = 3       # max jobs per cycle
+    curiosity_dedup_window: int = 1800      # suppress dupes for 30 min
+    curiosity_decay_limit: int = 5          # max decayed entities per cycle
+    curiosity_hypothesis_threshold: float = 0.3
+    curiosity_prediction_stale_days: int = 7
+    curiosity_skill_min_usage: int = 3
+    curiosity_skill_min_rate: float = 0.5
+    curiosity_desert_claim_threshold: int = 2
+
     @model_validator(mode="after")
     def resolve_paths(self):
         self.data_dir = self.data_dir.resolve()

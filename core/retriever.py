@@ -195,90 +195,87 @@ class ContextRetriever:
 
     # ── Layer 3: Graph (relationship traversal) ──────────────
 
-    async def _search_graph(self, query: str, limit: int = 20) -> list[dict]:
-        """Traverse entity graph starting from query-matched entities."""
-        # Find entities that match query terms
-        pattern = f"%{query}%"
-        r = await self.db.execute(
-            select(Entity).where(
-                Entity.name.ilike(pattern) | Entity.description.ilike(pattern)
-            ).limit(10)
-        )
-        seed_entities = list(r.scalars())
+    @staticmethod
+    def _text_relevance(text: str, terms: list[str]) -> float:
+        """How many of the expanded terms appear in the text."""
+        if not text or not terms:
+            return 0.0
+        lower = text.lower()
+        hits = sum(1 for t in terms if t in lower)
+        return min(1.0, hits / max(3, len(terms) * 0.2))
 
-        if not seed_entities:
-            # Try matching individual query words
-            tokens = re.findall(r'\w+', query)
-            for token in tokens:
-                pat = f"%{token}%"
-                r = await self.db.execute(
-                    select(Entity).where(Entity.name.ilike(pat)).limit(5)
-                )
-                seed_entities.extend(r.scalars())
-            seed_entities = list({e.id: e for e in seed_entities}.values())
+    async def _search_graph(self, query: str, limit: int = 10) -> list[dict]:
+        """Traverse entity graph from query-matched seeds, filtering by relevance."""
+        expanded = expand_query(query)
+        seed_ids = set()
 
-        if not seed_entities:
+        # Seed: entities whose name or description contains query words
+        tokens = [t for t in re.findall(r'\w+', query) if len(t) > 2]
+        for token in tokens:
+            pat = f"%{token}%"
+            r = await self.db.execute(
+                select(Entity).where(
+                    Entity.name.ilike(pat) | Entity.description.ilike(pat)
+                ).limit(5)
+            )
+            for e in r.scalars():
+                if e.id not in seed_ids:
+                    seed_ids.add(e.id)
+
+        if not seed_ids:
             return []
 
-        # BFS 2 hops
-        visited = set(e.id for e in seed_entities)
+        # BFS 1 hop only — 2 hops was too noisy
+        visited = set(seed_ids)
         results = []
-        queue = list(seed_entities)
+        hop_penalty = 0.3  # much stronger decay than 0.5
 
-        for _ in range(2):  # 2 hops
-            next_queue = []
-            for entity in queue:
-                # Outgoing
+        for seed_id in seed_ids:
+            r = await self.db.execute(
+                select(Entity).where(Entity.id == seed_id)
+            )
+            seed_ent = r.scalar_one_or_none()
+            if not seed_ent:
+                continue
+
+            for direction, col in [
+                ("outgoing", Relationship.from_entity_id),
+                ("incoming", Relationship.to_entity_id),
+            ]:
                 r = await self.db.execute(
-                    select(Relationship).where(
-                        Relationship.from_entity_id == entity.id
-                    )
+                    select(Relationship).where(col == seed_ent.id)
                 )
                 for rel in r.scalars():
-                    if rel.to_entity_id not in visited:
-                        visited.add(rel.to_entity_id)
-                        target = await self.db.execute(
-                            select(Entity).where(Entity.id == rel.to_entity_id)
-                        )
-                        target_ent = target.scalar_one_or_none()
-                        if target_ent:
-                            hop_score = 1.0 if entity.id in {e.id for e in seed_entities} else 0.5
-                            results.append({
-                                "type": "entity", "id": target_ent.id,
-                                "name": target_ent.name,
-                                "snippet": target_ent.description[:200] if target_ent.description else target_ent.name,
-                                "score": hop_score * rel.confidence,
-                                "via": entity.name,
-                                "relation": rel.relation_type,
-                            })
-                            next_queue.append(target_ent)
-                # Incoming
-                r = await self.db.execute(
-                    select(Relationship).where(
-                        Relationship.to_entity_id == entity.id
+                    neighbor_id = (
+                        rel.to_entity_id if direction == "outgoing"
+                        else rel.from_entity_id
                     )
-                )
-                for rel in r.scalars():
-                    if rel.from_entity_id not in visited:
-                        visited.add(rel.from_entity_id)
-                        source = await self.db.execute(
-                            select(Entity).where(Entity.id == rel.from_entity_id)
-                        )
-                        source_ent = source.scalar_one_or_none()
-                        if source_ent:
-                            hop_score = 1.0 if entity.id in {e.id for e in seed_entities} else 0.5
-                            results.append({
-                                "type": "entity", "id": source_ent.id,
-                                "name": source_ent.name,
-                                "snippet": source_ent.description[:200] if source_ent.description else source_ent.name,
-                                "score": hop_score * rel.confidence,
-                                "via": entity.name,
-                                "relation": rel.relation_type,
-                            })
-                            next_queue.append(source_ent)
-            queue = next_queue
-            if not queue:
-                break
+                    if neighbor_id in visited:
+                        continue
+                    visited.add(neighbor_id)
+
+                    r2 = await self.db.execute(
+                        select(Entity).where(Entity.id == neighbor_id)
+                    )
+                    neighbor = r2.scalar_one_or_none()
+                    if not neighbor:
+                        continue
+
+                    # Require SOME text relevance to include neighbor
+                    neighbor_text = f"{neighbor.name} {neighbor.description} {rel.relation_type}"
+                    relevance = self._text_relevance(neighbor_text, expanded)
+                    if relevance < 0.1:
+                        continue  # no overlap at all — skip
+
+                    score = hop_penalty * rel.confidence * max(relevance, 0.2)
+                    results.append({
+                        "type": "entity", "id": neighbor.id,
+                        "name": neighbor.name,
+                        "snippet": neighbor.description[:200] if neighbor.description else neighbor.name,
+                        "score": score,
+                        "via": seed_ent.name,
+                        "relation": rel.relation_type,
+                    })
 
         results.sort(key=lambda x: x.get("score", 0), reverse=True)
         return results[:limit]

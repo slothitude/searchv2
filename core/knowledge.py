@@ -152,7 +152,12 @@ class KnowledgeGraph:
         claims_out = []
         now = datetime.now(timezone.utc)
         for c in claims.scalars():
-            days = (now - c.last_verified).total_seconds() / 86400
+            dt = c.last_verified
+            if dt and dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if not dt:
+                dt = now
+            days = (now - dt).total_seconds() / 86400
             effective = c.confidence * math.exp(-c.decay_rate * days)
             claims_out.append({
                 "id": c.id, "type": c.claim_type, "key": c.claim_key,
@@ -176,7 +181,12 @@ class KnowledgeGraph:
         result = await self.db.execute(select(Claim))
         decayed = []
         for claim in result.scalars():
-            days = (now - claim.last_verified).total_seconds() / 86400
+            dt = claim.last_verified
+            if dt and dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if not dt:
+                dt = now
+            days = (now - dt).total_seconds() / 86400
             effective = claim.confidence * math.exp(-claim.decay_rate * days)
             if effective < settings.re_verification_threshold:
                 entity = await self.get_entity_by_id(claim.entity_id)

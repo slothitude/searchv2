@@ -13,6 +13,7 @@ from models.base import async_session
 from core.extractor import fetch_and_extract
 from core.ingest import _find_working_model, _extract_knowledge, _clean_entity_name
 from core.knowledge import KnowledgeGraph, MemoryStore
+from models.queue import QueueStore
 
 log = logging.getLogger("searchv2.rss")
 
@@ -209,6 +210,7 @@ class RSSPoller:
     async def _loop(self):
         # Small delay before first poll so other startup tasks finish
         await asyncio.sleep(5)
+        queue = QueueStore()
         while True:
             try:
                 # Fetch all feeds
@@ -217,11 +219,23 @@ class RSSPoller:
                          summary.get("feeds_processed", 0),
                          summary.get("total_new", 0))
 
-                # Ingest uningested articles
+                # Enqueue uningested articles for the queue worker to process
                 if summary.get("total_new", 0) > 0:
-                    ingest_result = await ingest_uningested(limit=10)
-                    log.info("RSS ingest: %d ingested, %d failed",
-                             ingest_result["ingested"], ingest_result["failed"])
+                    articles = await store.get_uningested(limit=10)
+                    enqueued = 0
+                    for article in articles:
+                        await queue.enqueue(
+                            "rss_ingest",
+                            f"RSS: {article.title[:80]}",
+                            params={"article_id": article.id, "url": article.url,
+                                    "title": article.title},
+                            priority=0.3,  # lower priority than manual jobs
+                        )
+                        enqueued += 1
+                    log.info("RSS: enqueued %d articles for ingest", enqueued)
+
+                    # Self-learning: extract key topics from titles and queue follow-up searches
+                    await self._enqueue_followup_searches(articles, queue)
 
             except asyncio.CancelledError:
                 raise
@@ -229,6 +243,40 @@ class RSSPoller:
                 log.error("RSS poll loop error: %s", e, exc_info=True)
 
             await asyncio.sleep(settings.rss_poll_interval)
+
+    async def _enqueue_followup_searches(self, articles, queue):
+        """Extract interesting topics from article titles and queue search jobs."""
+        import re
+        # Deduplicate topics
+        topics_seen = set()
+        for article in articles:
+            title = article.title
+            # Extract quoted phrases and capitalized multi-word terms
+            candidates = set()
+            # Quoted phrases
+            for m in re.finditer(r'"([^"]+)"', title):
+                candidates.add(m.group(1).strip())
+            # Capitalized 2-3 word phrases
+            for m in re.finditer(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b', title):
+                phrase = m.group(1)
+                if len(phrase) >= 5 and phrase.lower() not in (
+                    "abc news", "bbc news", "guardian australia", "google news",
+                    "sky news", "sbs news", "news com", "perth now",
+                ):
+                    candidates.add(phrase)
+
+            for topic in candidates:
+                if topic in topics_seen:
+                    continue
+                topics_seen.add(topic)
+                query = f"{topic} Australia 2026"
+                await queue.enqueue(
+                    "rss_search",
+                    f"RSS follow-up: {topic}",
+                    params={"query": query, "max_urls": 2},
+                    priority=0.2,  # lowest priority
+                )
+                log.info("RSS self-learning: queued search for '%s'", topic)
 
 
 poller = RSSPoller()

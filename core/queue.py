@@ -7,7 +7,10 @@ import logging
 from core.events import bus
 from core.search import search_searxng
 from core.ingest import ingest
+from core.rss import ingest_article
 from models.queue import QueueStore
+from models.rss import RSSArticle
+from sqlalchemy import select
 from models.base import async_session
 from config import settings
 
@@ -81,6 +84,47 @@ class QueueWorker:
                         max_urls=params.get("max_urls", 3),
                         classify=params.get("classify", True),
                         index_embeddings=params.get("index_embeddings", True),
+                    )
+                    await db.commit()
+                await self.store.update_status(job.id, "done", result=result)
+
+            elif job.job_type == "rss_ingest":
+                # Ingest a single RSS article by URL
+                from models.rss import RSSArticle
+                article_id = params.get("article_id")
+                url = params.get("url")
+                async with async_session() as db:
+                    article = (await db.execute(
+                        select(RSSArticle).where(RSSArticle.id == article_id)
+                    )).scalar_one_or_none() if article_id else None
+                if not article and url:
+                    from models.rss import FeedStore as FS
+                    fs = FS()
+                    found = await fs.list_articles(limit=500)
+                    match = [a for a in found if a["url"] == url]
+                    if match:
+                        async with async_session() as db:
+                            article = (await db.execute(
+                                select(RSSArticle).where(RSSArticle.id == match[0]["id"])
+                            )).scalar_one_or_none()
+                if article:
+                    ok = await ingest_article(article)
+                    await self.store.update_status(job.id, "done",
+                                                  result={"ingested": ok, "title": job.query})
+                else:
+                    await self.store.update_status(job.id, "done",
+                                                  result={"skipped": True, "reason": "article not found"})
+
+            elif job.job_type == "rss_search":
+                # Self-learning follow-up search triggered by RSS
+                query = params.get("query", job.query)
+                async with async_session() as db:
+                    result = await ingest(
+                        db=db,
+                        query=query,
+                        max_urls=params.get("max_urls", 2),
+                        classify=True,
+                        index_embeddings=True,
                     )
                     await db.commit()
                 await self.store.update_status(job.id, "done", result=result)

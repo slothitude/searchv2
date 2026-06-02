@@ -22,8 +22,33 @@ from config import settings
 log = logging.getLogger("searchv2.ingest")
 
 
-async def _extract_knowledge(text: str, source_url: str) -> list[dict]:
-    """Use LLM to extract entities and claims from text. Falls back to regex extraction."""
+async def _find_working_model(timeout: float = 15) -> str | None:
+    """Probe models once to find one that responds. Returns model name or None."""
+    import asyncio
+    test_prompt = 'Reply with the word OK. Nothing else.'
+    for model_attr in ("model_reflex", "model_reasoning", "model_attention"):
+        model = getattr(settings, model_attr, None)
+        if not model:
+            continue
+        try:
+            resp = await asyncio.wait_for(
+                call_ollama(test_prompt, model=model, max_tokens=10),
+                timeout=timeout,
+            )
+            if resp and resp.strip():
+                log.info("Model %s is responding", model)
+                return model
+        except (TimeoutError, Exception):
+            log.debug("Model %s not available", model)
+            continue
+    return None
+
+
+async def _extract_knowledge(text: str, source_url: str, model: str | None = None) -> list[dict]:
+    """Use LLM to extract entities and claims. Falls back to regex."""
+    if not model:
+        return _extract_knowledge_regex(text, source_url)
+
     truncated = text[:8000]
     prompt = f"""Extract knowledge from this text. Return JSON array of objects.
 For each interesting entity/concept, extract facts as claims.
@@ -37,30 +62,19 @@ Return JSON: [{{"entity": "name", "type": "technology|product|person|concept|org
 
 Only extract entities with at least one claim. Max 10 entities. Return JSON only, no explanation."""
 
-    # Try models in order: reflex (0.8B) → reasoning (4B) → attention (2B)
-    for model_attr in ("model_reflex", "model_reasoning", "model_attention"):
-        model = getattr(settings, model_attr, None)
-        if not model:
-            continue
-        try:
-            import asyncio
-            response = await asyncio.wait_for(
-                call_ollama(prompt, model=model, max_tokens=4096, temperature=0.3),
-                timeout=30,
-            )
-            if not response or not response.strip():
-                continue
+    import asyncio
+    try:
+        response = await asyncio.wait_for(
+            call_ollama(prompt, model=model, max_tokens=4096, temperature=0.3),
+            timeout=60,
+        )
+        if response and response.strip():
             start = response.index("[")
             end = response.rindex("]") + 1
             return json.loads(response[start:end])
-        except (ValueError, json.JSONDecodeError):
-            log.debug("Model %s returned unparseable response", model)
-            continue
-        except TimeoutError:
-            log.debug("Model %s timed out", model)
-            continue
+    except (ValueError, json.JSONDecodeError, TimeoutError, Exception) as e:
+        log.debug("Extraction failed with %s: %s", model, e)
 
-    log.warning("All models failed for %s, using regex fallback", source_url)
     return _extract_knowledge_regex(text, source_url)
 
 
@@ -152,12 +166,20 @@ async def ingest(
     if not search_results:
         return {"error": "No search results", "query": query}
 
-    # Step 2: Extract content from top URLs
-    top_urls = search_results[:max_urls]
+    # Step 2: Extract content from top URLs (skip low-value domains)
+    skip_domains = {"facebook.com", "twitter.com", "x.com", "linkedin.com",
+                    "instagram.com", "youtube.com", "tiktok.com", "pinterest.com"}
+    top_urls = sorted(search_results, key=lambda x: x.get("score", 0), reverse=True)
     extracted = []
-    for result in top_urls:
+    for result in top_urls[:max_urls * 2]:  # try extra in case some fail
+        if len(extracted) >= max_urls:
+            break
         url = result.get("url", "")
         if not url:
+            continue
+        from urllib.parse import urlparse
+        domain = urlparse(url).hostname or ""
+        if any(skip in domain for skip in skip_domains):
             continue
         try:
             content = await fetch_and_extract(url)
@@ -170,7 +192,12 @@ async def ingest(
     if not extracted:
         return {"error": "Failed to extract content from any URL", "urls_attempted": len(top_urls)}
 
-    # Step 3: Extract entities/claims from content
+    # Step 3: Find a working model once, use it for all URLs
+    model = None
+    if classify:
+        model = await _find_working_model(timeout=15)
+
+    # Step 4: Extract entities/claims from content
     total_entities = 0
     total_claims = 0
     ingested_entities = []
@@ -180,10 +207,8 @@ async def ingest(
         text = page.get("text", "")
         url = page.get("url", "")
 
-        if classify:
-            knowledge = await _extract_knowledge(text, url)
-        else:
-            # Fallback: create one entity per page with basic claims
+        if not classify or model is None:
+            # No model available: basic per-page entity
             title = page.get("title", url)
             knowledge = [{
                 "entity": title,
@@ -193,6 +218,8 @@ async def ingest(
                     {"key": "summary", "value": text[:500], "confidence": 0.5},
                 ],
             }]
+        else:
+            knowledge = await _extract_knowledge(text, url, model=model)
 
         for item in knowledge:
             entity_name = item.get("entity", "").strip()

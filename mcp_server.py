@@ -539,7 +539,7 @@ async def rss_refresh(feed_name: str = "") -> str:
             await _store.enqueue("rss_ingest", f"RSS: {article.title[:80]}",
                                  params={"article_id": article.id, "url": article.url,
                                          "title": article.title}, priority=0.3)
-        await poller._enqueue_followup_searches(articles, _store)
+        await rss_poller._enqueue_followup_searches(articles, _store)
         result["enqueued_ingest"] = len(articles)
 
     return json.dumps(result, indent=2, default=str)

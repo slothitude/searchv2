@@ -1,0 +1,35 @@
+{% extends "base.html.j2" %}
+
+{% set accent_color = '#f97316' %}
+
+{% block title %}Memory — SearchV2{% endblock %}
+
+{% block body %}
+<article class="memory-document"
+         data-memory-id="{{ memory.id | default('') }}">
+
+  <header>
+    <h1>Episodic Memory</h1>
+    {% if memory.entities %}
+    <div class="entity-links">
+      {% for ent in memory.entities %}
+      <a class="entity-tag" href="/docs/{{ ent }}">{{ ent }}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </header>
+
+  <section class="memory-content"
+           data-importance="{{ memory.importance | default(0.5) }}">
+    <p>{{ memory.content }}</p>
+    {% if memory.context %}
+    <p class="memory-context">{{ memory.context }}</p>
+    {% endif %}
+  </section>
+
+  <footer class="memory-meta">
+    <span data-created="{{ memory.created_at }}">{{ memory.created_at }}</span>
+    <meter value="{{ memory.importance | default(0.5) }}" min="0" max="1" title="Importance"></meter>
+  </footer>
+</article>
+{% endblock %}

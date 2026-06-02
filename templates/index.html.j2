@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SearchV2 Tome Index</title>
+  <meta name="tome-stats" content='{{ stats | tojson }}'>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "DataCatalog",
+    "name": "SearchV2 Tome",
+    "description": "Knowledge acquisition system document vault",
+    "hasPart": [
+      {% for doc in documents %}
+      {
+        "@type": "Dataset",
+        "identifier": "{{ doc.slug }}",
+        "name": "{{ doc.title }}",
+        "additionalType": "{{ doc.doc_type | default('document') }}",
+        "dateModified": "{{ doc.updated_at }}"
+      }{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
+  }
+  </script>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #e2e8f0; padding: 2rem; }
+    .stats { color: #64748b; margin-bottom: 2rem; }
+    a { color: #6366f1; }
+    .doc { margin: 0.5rem 0; }
+    .doc-type { color: #64748b; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <h1>SearchV2 Tome</h1>
+  <div class="stats">
+    {{ stats.doc_count | default(0) }} documents |
+    {{ stats.entity_count | default(0) }} entities |
+    {{ stats.skill_count | default(0) }} skills
+  </div>
+  <div class="catalog">
+    {% for doc in documents %}
+    <div class="doc" data-slug="{{ doc.slug }}" data-type="{{ doc.doc_type | default('document') }}">
+      <a href="/api/docs/{{ doc.slug }}/render">{{ doc.title }}</a>
+      <span class="doc-type">{{ doc.doc_type | default('document') }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</body>
+</html>

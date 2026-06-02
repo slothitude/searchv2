@@ -1,0 +1,11 @@
+{% if entity.last_verified %}
+{% set days_since = (now() - entity.last_verified).days | default(0) %}
+{% set decay_pct = (1 - (entity.confidence | default(0.5)) * (0.999 ** days_since)) * 100 | round %}
+<div class="decay-indicator {% if decay_pct > 50 %}stale{% endif %}"
+     data-days-since="{{ days_since }}"
+     data-decay-pct="{{ decay_pct }}"
+     data-last-verified="{{ entity.last_verified }}">
+  <span class="label">Last verified: {{ days_since }}d ago</span>
+  <span class="decay-pct {% if decay_pct > 50 %}warning{% endif %}">{{ decay_pct }}% decayed</span>
+</div>
+{% endif %}

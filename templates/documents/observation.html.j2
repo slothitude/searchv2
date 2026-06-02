@@ -1,0 +1,35 @@
+{% extends "base.html.j2" %}
+
+{% set accent_color = '#6b7280' %}
+
+{% block title %}Observation — SearchV2{% endblock %}
+
+{% block body %}
+<article class="observation-document"
+         data-source="{{ obs.source }}"
+         data-confidence="{{ obs.confidence }}"
+         data-importance="{{ obs.importance }}"
+         data-category="{{ obs.category }}"
+         data-created="{{ obs.created_at }}">
+
+  <header>
+    <h1>Observation</h1>
+    <div class="source-badge">{{ obs.source }}</div>
+  </header>
+
+  <section class="obs-content">
+    <p>{{ obs.observation_text }}</p>
+  </section>
+
+  <footer>
+    <div class="metrics">
+      <label>Confidence</label>
+      <meter value="{{ obs.confidence }}" min="0" max="1"></meter>
+      <label>Importance</label>
+      <meter value="{{ obs.importance }}" min="0" max="1"></meter>
+    </div>
+    <span class="timestamp">{{ obs.created_at }}</span>
+    <span class="category">{{ obs.category }}</span>
+  </footer>
+</article>
+{% endblock %}

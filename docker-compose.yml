@@ -1,0 +1,13 @@
+services:
+  searchv2:
+    build: .
+    ports:
+      - "7710:7710"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - SEARCHV2_DB_URL=sqlite+aiosqlite:///data/searchv2.db
+      - SEARCHV2_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - SEARCHV2_SEARXNG_URL=http://host.docker.internal:8888
+      - SEARCHV2_SECRET_KEY=${SEARCHV2_SECRET_KEY:-searchv2-dev-secret-change-me}
+    restart: unless-stopped

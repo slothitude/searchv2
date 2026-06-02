@@ -1,0 +1,10 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+pydantic-settings==2.8.1
+sqlalchemy[asyncio]==2.0.40
+aiosqlite==0.21.0
+jinja2==3.1.6
+httpx==0.28.1
+mcp[cli]==1.9.4
+sse-starlette==2.2.1
+tailwindcss>=4.0

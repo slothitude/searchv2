@@ -1,0 +1,65 @@
+{% extends "base.html.j2" %}
+
+{% set accent_color = '#f59e0b' %}
+
+{% block head_meta %}
+<meta name="mission-id" content="{{ mission.id }}">
+<meta name="mission-status" content="{{ mission.status }}">
+<meta name="mission-utility" content="{{ mission.total_utility | round(2) }}">
+{% endblock %}
+
+{% block title %}{{ mission.description }} — SearchV2{% endblock %}
+
+{% block body %}
+<article class="mission-dashboard"
+         data-mission-id="{{ mission.id }}"
+         data-status="{{ mission.status }}"
+         data-utility="{{ mission.total_utility | round(2) }}">
+
+  <header>
+    <h1>{{ mission.description }}</h1>
+    <div class="meta">
+      <span class="status-badge {{ mission.status }}">{{ mission.status }}</span>
+      <span class="utility">Utility: {{ mission.total_utility | round(2) }}</span>
+      <span class="spent">Spent: {{ (mission.total_spent_cents / 100) | round(2) }}</span>
+    </div>
+  </header>
+
+  {% for goal in mission.goals %}
+  <section class="goal-block"
+           data-goal-id="{{ goal.id }}"
+           data-status="{{ goal.status }}"
+           data-budget-cents="{{ goal.budget_cents }}"
+           data-spent-cents="{{ goal.spent_cents }}"
+           data-utility="{{ goal.utility_score | round(2) }}">
+    <h2>{{ goal.description }}</h2>
+    <div class="goal-meta">
+      <span class="status">{{ goal.status }}</span>
+      <span class="utility">Utility: {{ goal.utility_score | round(2) }}</span>
+      {% if goal.budget_cents > 0 %}
+      <div class="budget-bar" style="--spent: {{ ((goal.spent_cents / goal.budget_cents) * 100) | round }}%"></div>
+      {% endif %}
+    </div>
+
+    {% for sub in goal.sub_goals %}
+    <div class="sub-goal"
+         data-type="{{ sub.type }}"
+         data-status="{{ sub.status }}"
+         data-tool-plan="{{ sub.tool_plan | tojson | e }}"
+         data-info-value="{{ sub.info_value }}">
+      <span class="sg-type">{{ sub.type }}</span>
+      <span class="sg-desc">{{ sub.description }}</span>
+      <span class="sg-utility">{{ sub.utility | round(2) }}</span>
+
+      {% for exp in sub.experiments %}
+      <div class="experiment" data-status="{{ exp.status }}">
+        <span class="exp-status">{{ exp.status }}</span>
+        <span class="exp-desc">{{ exp.description }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endfor %}
+</article>
+{% endblock %}

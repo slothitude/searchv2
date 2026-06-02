@@ -1,0 +1,73 @@
+{% extends "base.html.j2" %}
+
+{% set accent_color = '#a855f7' %}
+
+{% block head_meta %}
+<meta name="hypothesis-id" content="{{ h.id }}">
+<meta name="hypothesis-status" content="{{ h.status }}">
+<meta name="hypothesis-confidence" content="{{ h.confidence | round(4) }}">
+{% endblock %}
+
+{% block title %}{{ h.claim }} — SearchV2{% endblock %}
+
+{% block body %}
+<article class="hypothesis-paper"
+         data-hypothesis-id="{{ h.id }}"
+         data-status="{{ h.status }}"
+         data-confidence="{{ h.confidence | round(4) }}">
+
+  <header>
+    <h1 class="claim">{{ h.claim }}</h1>
+    <div class="confidence-gauge" data-value="{{ h.confidence | round(4) }}">
+      <label>Confidence: {{ (h.confidence * 100) | round }}%</label>
+      <progress value="{{ h.confidence }}" max="1"></progress>
+    </div>
+    {% if h.entity %}
+    <p class="entity-ref">Entity: <a href="/docs/{{ h.entity }}">{{ h.entity }}</a></p>
+    {% endif %}
+  </header>
+
+  <section class="predictions">
+    <h2>Predictions</h2>
+    {% for p in h.predictions %}
+    <div class="prediction"
+         data-prediction-id="{{ p.id }}"
+         data-status="{{ p.status }}">
+      <span class="pred-status-icon">
+        {% if p.status == 'confirmed' %}&#10003;
+        {% elif p.status == 'refuted' %}&#10007;
+        {% else %}?{% endif %}
+      </span>
+      <span class="pred-text">{{ p.prediction_text }}</span>
+      {% if p.expected_evidence %}
+      <p class="pred-evidence">Expected: {{ p.expected_evidence }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+
+  {% if h.evidence %}
+  {% include "components/evidence_balance.html.j2" with context %}
+  {% endif %}
+
+  <section class="evidence-list">
+    <h2>Evidence</h2>
+    {% for e in h.evidence %}
+    <blockquote class="evidence-item"
+                data-direction="{{ e.direction }}"
+                data-confidence-impact="{{ e.confidence_impact }}"
+                cite="{{ e.source_url }}">
+      {{ e.content }}
+      <footer>
+        {% if e.source_url %}
+        <a href="{{ e.source_url }}">Source</a>
+        {% endif %}
+        <span class="impact-badge {{ 'positive' if e.direction == 'supporting' else 'negative' }}">
+          {{ '+' if e.direction == 'supporting' else '-' }}{{ (e.confidence_impact * 100) | round }}%
+        </span>
+      </footer>
+    </blockquote>
+    {% endfor %}
+  </section>
+</article>
+{% endblock %}

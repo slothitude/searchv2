@@ -1,0 +1,61 @@
+{% extends "base.html.j2" %}
+
+{% set accent_color = '#3b82f6' %}
+
+{% block head_meta %}
+<meta name="skill-id" content="{{ skill.id }}">
+<meta name="skill-domain" content="{{ skill.domain }}">
+<meta name="skill-success-rate" content="{{ skill.success_rate | round(3) }}">
+<meta name="skill-usage-count" content="{{ skill.usage_count }}">
+{% endblock %}
+
+{% block title %}{{ skill.name }} — SearchV2{% endblock %}
+
+{% block body %}
+<article class="skill-runbook"
+         data-skill-id="{{ skill.id }}"
+         data-domain="{{ skill.domain }}"
+         data-success-rate="{{ skill.success_rate | round(3) }}"
+         data-usage-count="{{ skill.usage_count }}">
+
+  <header>
+    <h1>{{ skill.name }}</h1>
+    <p>{{ skill.description }}</p>
+    <div class="skill-stats">
+      <span data-metric="success-rate">{{ (skill.success_rate * 100) | round }}% success</span>
+      <span data-metric="usage-count">{{ skill.usage_count }} executions</span>
+      <span class="domain-badge">{{ skill.domain }}</span>
+    </div>
+  </header>
+
+  {% if skill.preconditions %}
+  <section class="preconditions">
+    <h2>Preconditions</h2>
+    {% for pre in skill.preconditions %}
+    <div class="precondition" data-key="{{ pre.key }}" data-required="{{ pre.required | default(true) | lower }}">
+      {{ pre.description }}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  <section class="procedure">
+    <h2>Procedure</h2>
+    <ol class="procedure-steps">
+      {% for step in skill.steps %}
+      <li class="step"
+          data-step-index="{{ loop.index0 }}"
+          data-tool="{{ step.tool | default('') }}"
+          data-params="{{ step.params | default({}) | tojson | e }}"
+          data-expected-output="{{ step.expected_output | default('') }}">
+        <h3>{{ step.title | default('Step ' ~ loop.index) }}</h3>
+        <p>{{ step.description | default('') }}</p>
+        {% if step.code %}
+        <pre><code data-lang="{{ step.lang | default('text') }}">{{ step.code }}</code></pre>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+</article>
+{% endblock %}

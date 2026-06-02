@@ -1,0 +1,71 @@
+{% extends "base.html.j2" %}
+
+{% set accent_color = '#14b8a6' %}
+
+{% block head_meta %}
+<meta name="entity-type" content="{{ entity.type }}">
+<meta name="entity-confidence" content="{{ entity.confidence | round(2) }}">
+<meta name="last-verified" content="{{ entity.last_verified }}">
+<meta name="decay-rate" content="{{ entity.decay_rate | default(0.001) }}">
+{% endblock %}
+
+{% block head_jsonld %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Thing",
+  "name": "{{ entity.name }}",
+  "description": "{{ entity.description }}",
+  "additionalProperty": [
+    {% for claim in entity.claims %}
+    {
+      "@type": "PropertyValue",
+      "name": "{{ claim.key }}",
+      "value": "{{ claim.value }}",
+      "additionalType": "Claim",
+      "certainty": {{ claim.confidence | round(4) }}
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ]
+}
+</script>
+{% endblock %}
+
+{% block title %}{{ entity.name }} — SearchV2{% endblock %}
+
+{% block body %}
+<article class="entity-document" data-entity-type="{{ entity.type }}" data-entity-id="{{ entity.id }}">
+  <header class="entity-header">
+    <h1>{{ entity.name }}</h1>
+    <p class="entity-type-badge">{{ entity.type }}</p>
+    {% if entity.description %}
+    <p>{{ entity.description }}</p>
+    {% endif %}
+    {% include "components/confidence_bar.html.j2" with context %}
+    {% include "components/decay_indicator.html.j2" with context %}
+  </header>
+
+  <section class="claims" itemscope itemtype="https://schema.org/ItemList">
+    <h2>Claims</h2>
+    {% for claim in entity.claims %}
+    <div class="claim-row"
+         itemprop="itemListElement"
+         data-claim-key="{{ claim.key }}"
+         data-claim-confidence="{{ claim.confidence | round(4) }}"
+         data-claim-evidence-count="{{ claim.evidence_count }}"
+         data-disputed="{{ claim.disputed | lower | default('false') }}">
+      <span class="claim-key">{{ claim.key }}</span>
+      <span class="claim-value">{{ claim.value }}</span>
+      <meter value="{{ claim.confidence }}" min="0" max="1" class="inline-confidence"></meter>
+      <span class="effective-confidence {% if claim.effective_confidence < 0.5 %}stale{% endif %}">
+        eff: {{ (claim.effective_confidence | round(3)) }}%
+      </span>
+    </div>
+    {% endfor %}
+  </section>
+
+  {% if entity.relationships %}
+  {% include "components/entity_graph.html.j2" with context %}
+  {% endif %}
+</article>
+{% endblock %}

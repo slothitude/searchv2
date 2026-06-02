@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="doc-type" content="{{ doc_type | default('document') }}">
+  <meta name="generated-by" content="SearchV2">
+  <meta name="generated-at" content="{{ now().isoformat() }}">
+  {% block head_meta %}{% endblock %}
+  {% block head_jsonld %}{% endblock %}
+  <link rel="stylesheet" href="/static/tome.css">
+  <title>{% block title %}SearchV2{% endblock %}</title>
+  <style>
+    :root {
+      --accent: {{ accent_color | default('#6366f1') }};
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --border: #334155;
+    }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    h1 { color: var(--accent); border-bottom: 2px solid var(--accent); padding-bottom: 0.5rem; }
+    h2 { color: var(--accent); opacity: 0.8; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    section { margin: 1.5rem 0; }
+  </style>
+</head>
+<body>
+  {% block body %}{% endblock %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

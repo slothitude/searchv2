@@ -1,0 +1,19 @@
+<section class="relationships" data-center-entity="{{ entity.name }}">
+  <h2>Relationships</h2>
+  {% for rel in entity.relationships %}
+  <div class="rel-edge"
+       data-relation="{{ rel.relation_type }}"
+       data-confidence="{{ rel.confidence | round(3) }}">
+    {% if rel.direction == 'outgoing' %}
+    <a href="/api/docs/{{ rel.target | lower | replace(' ', '-') }}">
+      {{ entity.name }} → {{ rel.relation_type }} → {{ rel.target }}
+    </a>
+    {% else %}
+    <a href="/api/docs/{{ rel.source | lower | replace(' ', '-') }}">
+      {{ rel.source }} → {{ rel.relation_type }} → {{ entity.name }}
+    </a>
+    {% endif %}
+    <meter value="{{ rel.confidence }}" min="0" max="1" class="rel-confidence"></meter>
+  </div>
+  {% endfor %}
+</section>

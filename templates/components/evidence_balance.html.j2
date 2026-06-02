@@ -1,0 +1,16 @@
+{% set supporting = h.evidence | selectattr('direction', 'equalto', 'supporting') | list | length %}
+{% set contradicting = h.evidence | selectattr('direction', 'equalto', 'contradicting') | list | length %}
+{% set total = supporting + contradicting %}
+{% set balance = (supporting / total * 100) | round if total > 0 else 50 %}
+
+<section class="evidence-balance" data-supporting="{{ supporting }}" data-contradicting="{{ contradicting }}">
+  <h2>Evidence Balance</h2>
+  <div class="balance-bar">
+    <div class="supporting-side" style="width: {{ balance }}%">
+      {{ supporting }} supporting
+    </div>
+    <div class="contradicting-side" style="width: {{ 100 - balance }}%">
+      {{ contradicting }} contradicting
+    </div>
+  </div>
+</section>

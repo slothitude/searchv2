@@ -92,6 +92,9 @@ uvicorn app:app --reload --port 7710
 - `POST /api/index` — Generate embeddings for entities/claims
 - `GET /api/retrieve/status` — Check embedding coverage
 
+### Ingest
+- `POST /api/ingest` — Search→Extract→Classify→Store→Index pipeline
+
 ## ContextRetriever
 
 Multi-layer retrieval that searches more than documents — it searches concepts, entities, claims, relationships, and hypotheses simultaneously.
@@ -162,7 +165,52 @@ curl -X POST http://localhost:7710/api/index \
   -d '{"target_type": "all"}'
 ```
 
-## MCP Tools (28)
+## Ingest Pipeline
+
+Automated search→extract→classify→store→index pipeline that makes any web search retrievable.
+
+### Flow
+
+```
+Query
+  │
+  ▼
+SearXNG (web search)
+  │
+  ▼
+Extract top N URLs (fetch_and_extract)
+  │
+  ▼
+0.8B Reflex → 4B Reasoning → 2B Attention (model ladder)
+  ├─ Success: structured entities + claims from LLM
+  └─ All fail: regex fallback (sentence extraction)
+  │
+  ▼
+KnowledgeGraph (add_entity, add_claim)
+  │
+  ▼
+MemoryStore (episodic record of ingest)
+  │
+  ▼
+Embeddings (nomic-embed-text) → retrievable via ContextRetriever
+```
+
+### Usage
+
+```bash
+# Full pipeline (search + extract + classify + embed)
+curl -X POST http://localhost:7710/api/ingest \
+  -d '{"query": "Raspberry Pi AI inference", "max_urls": 3}'
+
+# Skip LLM classification (regex only), no embeddings
+curl -X POST http://localhost:7710/api/ingest \
+  -d '{"query": "Python async patterns", "max_urls": 2, "classify": false, "index_embeddings": false}'
+
+# MCP tool
+search_ingest(query="fastapi best practices", max_urls=3)
+```
+
+## MCP Tools (30)
 
 | Category | Tools |
 |----------|-------|
@@ -175,6 +223,8 @@ curl -X POST http://localhost:7710/api/index \
 | Utility (1) | `query_utility` |
 | Router (1) | `route` |
 | Search (3) | `search`, `browse`, `extract` |
+| Ingest (1) | `search_ingest` |
+| Retriever (3) | `retrieve`, `index_embeddings`, `embedding_status` |
 
 ## Configuration
 

@@ -65,3 +65,27 @@ async def retrieval_status(deps=Depends(get_retriever)):
         "total_embeddings": total.scalar(),
         "by_type": {row[0]: row[1] for row in by_type.all()},
     }
+
+
+class IngestRequest(BaseModel):
+    query: str
+    max_urls: int = 3
+    max_results: int = 10
+    classify: bool = True
+    index_embeddings: bool = True
+
+
+@router.post("/ingest")
+async def ingest(body: IngestRequest):
+    """Search→Extract→Classify→Store→Index pipeline."""
+    from core.ingest import ingest
+    async with async_session() as db:
+        result = await ingest(
+            db=db,
+            query=body.query,
+            max_urls=body.max_urls,
+            max_results=body.max_results,
+            classify=body.classify,
+            index_embeddings=body.index_embeddings,
+        )
+        return result

@@ -15,6 +15,7 @@ from core.search import search_searxng
 from core.extractor import fetch_and_extract
 from core.router import Router, Tier
 from core.retriever import ContextRetriever
+from core.ingest import ingest
 
 mcp = FastMCP("SearchV2", instructions="Knowledge acquisition system with Tome vault, observation, missions, knowledge graph, multi-layer retrieval, and skills.")
 
@@ -353,6 +354,20 @@ async def extract(url: str) -> str:
     if "error" in result:
         return f"Error: {result['error']}"
     return result.get("text", "")[:10000]
+
+
+# ── Ingest (1 tool) ─────────────────────────────────────────
+
+@mcp.tool()
+async def search_ingest(query: str, max_urls: int = 3, classify: bool = True,
+                        index_embeddings: bool = True) -> str:
+    """Search the web, extract content, create entities/claims, and index embeddings. Full search→ingest→index pipeline."""
+    async with async_session() as db:
+        result = await ingest(
+            db=db, query=query, max_urls=max_urls,
+            classify=classify, index_embeddings=index_embeddings,
+        )
+        return json.dumps(result, indent=2, default=str)
 
 
 # ── Retriever (3 tools) ─────────────────────────────────────

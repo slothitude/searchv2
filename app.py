@@ -1,10 +1,19 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, Request
 from config import settings
 
 from models.base import init_db
 from core.queue import worker as queue_worker
 from core.rss import poller as rss_poller
+
+
+async def verify_token(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+    token = auth[7:]
+    if token != settings.secret_key:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 @asynccontextmanager
@@ -18,7 +27,8 @@ async def lifespan(app: FastAPI):
     await queue_worker.stop()
 
 
-app = FastAPI(title="SearchV2", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="SearchV2", version="0.1.0", lifespan=lifespan,
+              dependencies=[Depends(verify_token)])
 
 # Routers registered as phases are implemented
 from api import tome, observation, mission, knowledge, research, events, retrieve

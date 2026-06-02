@@ -1,5 +1,8 @@
 import re
 import httpx
+import ipaddress
+import socket
+from urllib.parse import urlparse
 from html.parser import HTMLParser
 
 
@@ -46,6 +49,8 @@ def extract_text(html: str, max_length: int = 50000) -> str:
 
 async def fetch_and_extract(url: str, max_length: int = 50000) -> dict:
     """Fetch a URL and extract text content."""
+    if _is_private_url(url):
+        return {"url": url, "error": "URL blocked (private/internal address)"}
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             headers = {
@@ -77,3 +82,43 @@ def _extract_title(html: str) -> str:
     if match:
         return html_mod.unescape(match.group(1).strip())
     return ""
+
+
+# ── SSRF protection ────────────────────────────────────────
+
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("0.0.0.0/8"),
+]
+
+_BLOCKED_HOSTS = {"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"}
+
+
+def _is_private_url(url: str) -> bool:
+    """Check if a URL points to a private/internal address. Blocks SSRF."""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return True
+        hostname = hostname.lower()
+        if hostname in _BLOCKED_HOSTS:
+            return True
+        # Resolve hostname to IPs
+        try:
+            addr_infos = socket.getaddrinfo(hostname, parsed.port or 443, socket.AF_UNSPEC)
+            for family, _, _, _, sockaddr in addr_infos:
+                ip = ipaddress.ip_address(sockaddr[0])
+                if any(ip in net for net in _PRIVATE_NETWORKS):
+                    return True
+        except socket.gaierror:
+            return True  # can't resolve = don't fetch
+    except Exception:
+        return True
+    return False

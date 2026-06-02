@@ -80,9 +80,9 @@ class ContextRetriever:
 
 ### HIGH — Security
 
-- [ ] **No authentication on MCP tools or API endpoints** — `mcp_server.py`, `app.py`. Anyone with network access to port 7711 can enqueue jobs, ingest URLs, create entities. Add auth middleware or token-based access.
-- [ ] **SSRF via browse/extract/ingest tools** — `core/extractor.py:47-71`. `fetch_and_extract` follows redirects with no URL validation. Block internal IPs (`127.0.0.0/8`, `10.0.0.0/8`, `192.168.0.0/16`, `172.16.0.0/12`).
-- [ ] **Hardcoded secret key** — `config.py:57`. Default `"searchv2-dev-secret-change-me"` is well-known. Remove default or force env var.
+- [x] **No authentication on MCP tools or API endpoints** — `mcp_server.py`, `app.py`. Fixed: added Bearer token auth middleware to FastAPI app via `Depends(verify_token)`. MCP server runs via stdio (local pipe, no network exposure). Token: `settings.secret_key`.
+- [x] **SSRF via browse/extract/ingest tools** — `core/extractor.py:47-71`. Fixed: added `_is_private_url()` check that validates hostname against blocked patterns + DNS resolves to check against RFC 1918 private ranges, link-local, loopback. Blocks `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `fc00::/7`.
+- [x] **Hardcoded secret key** — `config.py:57`. Fixed: removed default `"searchv2-dev-secret-change-me"`. Auto-generates 64-char hex key on first run, persists to `data/.secret_key`. Override via `SEARCHV2_SECRET_KEY` env var.
 
 ### HIGH — Architecture
 
@@ -103,7 +103,7 @@ class ContextRetriever:
 - [x] **SQLite DB path is relative** — `config.py:11`. Fixed: `model_validator` resolves `data_dir` to absolute, `models/base.py` derives db_url from resolved path.
 - [x] **No retry/backoff for failing feeds** — `core/rss.py`. Fixed: `update_feed_fetched()` auto-disables feed after `rss_disable_after_errors` (default 10) consecutive errors.
 - [x] **Event bus has no cleanup for dead subscribers** — `core/events.py`. Fixed: subscribers have TTL (30 min), `publish()` calls `_cleanup_stale()` to remove expired entries.
-- [ ] **Prompt injection via article content** — `core/ingest.py:53-63`. Malicious articles could manipulate LLM extraction. Sanitize or truncate aggressively.
+- [x] **Prompt injection via article content** — `core/ingest.py:53-63`. Fixed: regex-sanitize injection patterns (ignore/disregard/you are), wrap article content in `===BEGIN ARTICLE===` / `===END ARTICLE===` delimiters with explicit instruction to only extract factual information.
 - [x] **`export_to_tome` HTML injection** — `mcp_server.py:290-303`. Fixed: all entity/claim values wrapped with `html.escape()`.
 - [x] **`_extract_title` doesn't decode HTML entities** — `core/extractor.py:75`. Fixed: uses `html.unescape()` on extracted title.
 

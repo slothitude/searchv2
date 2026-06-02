@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     queue_poll_interval: float = 2.0
 
     # Auth
-    secret_key: str = "searchv2-dev-secret-change-me"
+    secret_key: str = ""  # Set via SEARCHV2_SECRET_KEY, or auto-generated on first run
     bootstrap_token: str = ""
 
     # RSS
@@ -79,6 +79,15 @@ class Settings(BaseSettings):
     def resolve_paths(self):
         self.data_dir = self.data_dir.resolve()
         self.db_url = f"sqlite+aiosqlite:///{self.data_dir}/searchv2.db"
+        # Auto-generate and persist secret key if not set
+        if not self.secret_key:
+            key_file = self.data_dir / ".secret_key"
+            if key_file.exists():
+                self.secret_key = key_file.read_text().strip()
+            else:
+                import secrets
+                self.secret_key = secrets.token_hex(32)
+                key_file.write_text(self.secret_key)
         return self
 
     model_config = {"env_prefix": "SEARCHV2_"}

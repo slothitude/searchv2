@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from mcp.server.fastmcp import FastMCP
 
 from models.base import async_session, init_db
@@ -20,7 +21,17 @@ from core.queue import worker as queue_worker
 from core.rss import store as rss_store, fetch_all, ingest_uningested, poller as rss_poller
 from models.queue import QueueStore
 
-mcp = FastMCP("SearchV2", instructions="Knowledge acquisition system with Tome vault, observation, missions, knowledge graph, multi-layer retrieval, skills, and RSS feeds.")
+@asynccontextmanager
+async def lifespan(server):
+    await init_db()
+    await queue_worker.start()
+    await rss_poller.start()
+    yield
+    await rss_poller.stop()
+    await queue_worker.stop()
+
+
+mcp = FastMCP("SearchV2", instructions="Knowledge acquisition system with Tome vault, observation, missions, knowledge graph, multi-layer retrieval, skills, and RSS feeds.", lifespan=lifespan)
 
 
 # ── Tome (5 tools) ──────────────────────────────────────────
@@ -544,9 +555,6 @@ async def rss_articles(feed_name: str = "", limit: int = 20) -> str:
 
 if __name__ == "__main__":
     import sys
-    asyncio.run(init_db())
-    asyncio.run(queue_worker.start())
-    asyncio.run(rss_poller.start())
 
     # stdio when spawned by Claude Code, streamable-http when run standalone
     if "--stdio" in sys.argv:

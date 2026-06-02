@@ -87,6 +87,81 @@ uvicorn app:app --reload --port 7710
 - `GET /api/events/stream` — SSE event stream
 - `POST /api/events/publish` — Publish event
 
+### Retriever
+- `POST /api/retrieve` — Multi-layer conceptual search
+- `POST /api/index` — Generate embeddings for entities/claims
+- `GET /api/retrieve/status` — Check embedding coverage
+
+## ContextRetriever
+
+Multi-layer retrieval that searches more than documents — it searches concepts, entities, claims, relationships, and hypotheses simultaneously.
+
+### Architecture
+
+```
+User Query
+     │
+     ▼
+Query Expansion (synonym groups)
+     │
+     ▼
+┌──────────────────────────┐
+│ FTS5 Lexical (ILIKE)     │  ← 0.25 weight
+│ Semantic (embeddings)     │  ← 0.35 weight
+│ Graph (BFS 2-hop)        │  ← 0.25 weight
+│ Fact (claim overlap)      │  ← 0.15 weight
+└──────────────────────────┘
+     │
+     ▼
+Reranker → Context Pack
+```
+
+### Four Layers
+
+**Lexical** — ILIKE text search across entities, claims, memories, hypotheses. Matches expanded query terms via synonym groups (e.g. "DS" → "dropshipping", "error" → "failure" → "bug" → "fault").
+
+**Semantic** — 768-dim embeddings via `nomic-embed-text` (Ollama). Cosine similarity against stored entity and claim vectors. Threshold: 0.3.
+
+**Graph** — BFS traversal from query-matched entities, 2 hops deep. Follows relationships to discover connected entities even when no words overlap.
+
+**Fact** — Claim key/value overlap scoring using expanded query terms. Also returns claims from entities adjacent to matched entities.
+
+### Concept Expansion
+
+Queries are expanded with synonym groups before searching:
+
+```
+"cheap supplier"
+  → supplier, vendor, manufacturer, wholesaler, provider, seller
+  → cheap, low cost, bulk, discount, budget, affordable, inexpensive
+```
+
+This lets queries like `"DS search permission"` match claims about `dropshipping API authentication`.
+
+### Scoring
+
+```python
+score = 0.25 * lexical + 0.35 * semantic + 0.25 * graph + 0.15 * fact
+```
+
+Semantic has the highest weight because embeddings capture conceptual meaning that text and graph alone miss. A 4B model with excellent fact-aware retrieval outperforms a 35B model with mediocre context.
+
+### Usage
+
+```bash
+# Fast path (no LLM call, lexical+graph+fact only)
+curl -X POST http://localhost:7710/api/retrieve \
+  -d '{"query": "supplier lookup failure", "use_semantic": false}'
+
+# Full retrieval (includes embedding similarity)
+curl -X POST http://localhost:7710/api/retrieve \
+  -d '{"query": "cheap supplier", "use_semantic": true}'
+
+# Generate embeddings for all entities and claims
+curl -X POST http://localhost:7710/api/index \
+  -d '{"target_type": "all"}'
+```
+
 ## MCP Tools (28)
 
 | Category | Tools |

@@ -14,8 +14,9 @@ from core.skills import SkillGenerator
 from core.search import search_searxng
 from core.extractor import fetch_and_extract
 from core.router import Router, Tier
+from core.retriever import ContextRetriever
 
-mcp = FastMCP("SearchV2", instructions="Knowledge acquisition system with Tome vault, observation, missions, knowledge graph, and skills.")
+mcp = FastMCP("SearchV2", instructions="Knowledge acquisition system with Tome vault, observation, missions, knowledge graph, multi-layer retrieval, and skills.")
 
 
 # ── Tome (5 tools) ──────────────────────────────────────────
@@ -352,6 +353,52 @@ async def extract(url: str) -> str:
     if "error" in result:
         return f"Error: {result['error']}"
     return result.get("text", "")[:10000]
+
+
+# ── Retriever (3 tools) ─────────────────────────────────────
+
+@mcp.tool()
+async def retrieve(query: str, limit: int = 10, use_semantic: bool = True) -> str:
+    """Multi-layer conceptual search across entities, claims, documents, and hypotheses. Combines lexical, semantic (embeddings), graph (relationship traversal), and fact search with reranking. use_semantic=false for instant results without LLM calls."""
+    async with async_session() as db:
+        retriever = ContextRetriever(db)
+        result = await retriever.retrieve(query, limit=limit, use_semantic=use_semantic)
+        return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool()
+async def index_embeddings(target_type: str = "all", target_id: int = 0) -> str:
+    """Generate embeddings for entities and claims using nomic-embed-text. Run after adding new knowledge. target_type: 'all' (everything), 'entity' (specific entity by target_id + its claims)."""
+    async with async_session() as db:
+        retriever = ContextRetriever(db)
+        if target_type == "all":
+            counts = await retriever.index_all()
+            await db.commit()
+            return json.dumps(counts, indent=2)
+        elif target_type == "entity" and target_id:
+            await retriever.index_entity(target_id)
+            await retriever.index_claims_for_entity(target_id)
+            await db.commit()
+            return f"Indexed entity {target_id} and its claims"
+        return "Provide target_type='all' or target_type='entity' with target_id"
+
+
+@mcp.tool()
+async def embedding_status() -> str:
+    """Check how many entities and claims have embedding vectors."""
+    async with async_session() as db:
+        from sqlalchemy import func, select
+        from models.knowledge import Embedding
+        retriever = ContextRetriever(db)
+        total = await db.execute(select(func.count()).select_from(Embedding))
+        by_type = await db.execute(
+            select(Embedding.target_type, func.count())
+            .group_by(Embedding.target_type)
+        )
+        return json.dumps({
+            "total": total.scalar(),
+            "by_type": {row[0]: row[1] for row in by_type.all()},
+        }, indent=2)
 
 
 if __name__ == "__main__":

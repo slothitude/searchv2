@@ -1,6 +1,6 @@
 # SearchV2 — Knowledge Acquisition System
 
-A continuously improving knowledge organism. Observes, identifies opportunities, plans missions, generates hypotheses, accumulates knowledge, learns procedures, and decays stale information.
+A continuously improving knowledge organism. Observes, identifies opportunities, plans missions, generates hypotheses, accumulates knowledge, learns procedures, and decays stale information. Feeds itself from Australian news via RSS and autonomously searches for topics it discovers.
 
 ## Pipeline
 
@@ -10,7 +10,7 @@ Observation → Opportunity → Mission → Goal → Hypothesis → Prediction �
 
 ## Stack
 
-FastAPI + SQLite (FTS5) + Jinja2 + Ollama + SearXNG + FastMCP
+FastAPI + SQLite (FTS5) + Jinja2 + Ollama + SearXNG + feedparser + FastMCP
 
 ## Model Ladder
 
@@ -27,22 +27,94 @@ FastAPI + SQLite (FTS5) + Jinja2 + Ollama + SearXNG + FastMCP
 ## Quick Start
 
 ```bash
-docker compose up --build
-# Open http://localhost:7710
-```
-
-Or locally:
-```bash
 pip install -r requirements.txt
 uvicorn app:app --reload --port 7710
 ```
+
+The MCP server auto-starts via stdio when Claude Code connects.
 
 ## Two Storage Systems
 
 1. **Tome** — HTML+Jinja2 document vault with typed templates (entity, hypothesis, mission, skill, memory, observation). Every document is both human-readable and machine-parsable via `data-*` attributes and JSON-LD.
 2. **Memory** — Separate from knowledge. Episodic recall ("last time we researched X, Y happened").
 
+## RSS News Pipeline
+
+SearchV2 continuously ingests Australian news via RSS.
+
+### Feeds
+
+10 Australian sources polled every hour:
+
+| Feed | Source |
+|------|--------|
+| ABC News, ABC Just In | abc.net.au |
+| Guardian Australia | theguardian.com/au |
+| Google News AU | news.google.com (AU) |
+| SBS News, 9News, 7News | Australian broadcasters |
+| BBC Australia | bbci.co.uk |
+| Crikey, Perth Now | Independent |
+
+### Self-Learning Loop
+
+```
+RSS articles arrive (titles)
+     │
+     ▼
+0.8B extracts topic keywords from titles
+     │
+     ▼
+Follow-up web searches for interesting topics
+     │
+     ▼
+Full ingest pipeline (extract → classify → store → embed)
+     │
+     ▼
+Knowledge grows based on what the news is talking about
+```
+
+The system discovers what matters and researches it — no human queries needed.
+
+## Background Queue
+
+Long-running jobs run asynchronously in a persistent queue (stored in SQLite).
+
+### Job Types
+
+| Job | Trigger | Pipeline |
+|-----|---------|----------|
+| `search` | `queue_search` | SearXNG search, return results |
+| `ingest` | `queue_ingest` | Full search→extract→classify→store→index |
+| `rss_ingest` | Auto / `rss_refresh` | Extract article text → ingest into knowledge graph |
+| `rss_search` | Auto | Topic extraction from article titles → follow-up searches |
+
+### Usage
+
+```bash
+# Fire-and-forget ingest
+queue_ingest(query="Australian housing policy")
+
+# Check status
+queue_status(job_id=123)
+
+# Cancel a job
+queue_cancel(job_id=123)
+```
+
+## Security
+
+| Feature | Implementation |
+|---------|---------------|
+| **API Authentication** | Bearer token on all endpoints (`Authorization: Bearer <key>`) |
+| **SSRF Protection** | URL validation blocks private IPs, localhost, link-local ranges (RFC 1918) |
+| **Secret Key** | Auto-generated 64-char hex on first run, persisted to `data/.secret_key` |
+| **Prompt Injection** | Regex sanitization + `===BEGIN/END ARTICLE===` delimiters |
+| **HTML Escaping** | All user-generated content escaped in Tome exports |
+| **Event Bus TTL** | Stale subscribers cleaned up after 30 minutes |
+
 ## API
+
+All endpoints require `Authorization: Bearer <token>`.
 
 ### Tome
 - `POST/GET/PATCH/DELETE /api/docs` — CRUD documents
@@ -54,8 +126,8 @@ uvicorn app:app --reload --port 7710
 - `POST /api/docs/{slug}/assets` — Upload binary assets
 
 ### Research
-- `POST /api/search` — SearXNG web search
-- `POST /api/extract` — URL → text extraction
+- `POST /api/search` — SearXNG web search (engine-pinned to Google/DuckDuckGo/Bing)
+- `POST /api/extract` — URL → text extraction (SSRF-protected)
 - `POST /api/classify` — 0.8B reflex classification
 - `POST /api/plan` — 2B goal decomposition
 - `POST /api/judge` — 4B evidence evaluation
@@ -78,6 +150,11 @@ uvicorn app:app --reload --port 7710
 - `POST /api/missions/{id}/decompose` — Break into goals
 - `POST /api/goals/{id}/plan` — Break into sub-goals
 - `POST /api/subgoals/{id}/experiments` — Add experiment
+
+### RSS
+- `GET /api/rss/feeds` — List feeds with article counts
+- `POST /api/rss/refresh` — Trigger fetch (one feed or all)
+- `GET /api/rss/articles` — List recent articles
 
 ### Skills
 - Auto-generated from 5+ confirmed claims in a domain
@@ -123,46 +200,16 @@ Reranker → Context Pack
 
 **Lexical** — ILIKE text search across entities, claims, memories, hypotheses. Matches expanded query terms via synonym groups (e.g. "DS" → "dropshipping", "error" → "failure" → "bug" → "fault").
 
-**Semantic** — 768-dim embeddings via `nomic-embed-text` (Ollama). Cosine similarity against stored entity and claim vectors. Threshold: 0.3.
+**Semantic** — 768-dim embeddings via `nomic-embed-text` (Ollama). Batch cosine similarity with numpy. Threshold: 0.3.
 
 **Graph** — BFS traversal from query-matched entities, 2 hops deep. Follows relationships to discover connected entities even when no words overlap.
 
 **Fact** — Claim key/value overlap scoring using expanded query terms. Also returns claims from entities adjacent to matched entities.
 
-### Concept Expansion
-
-Queries are expanded with synonym groups before searching:
-
-```
-"cheap supplier"
-  → supplier, vendor, manufacturer, wholesaler, provider, seller
-  → cheap, low cost, bulk, discount, budget, affordable, inexpensive
-```
-
-This lets queries like `"DS search permission"` match claims about `dropshipping API authentication`.
-
 ### Scoring
 
 ```python
 score = 0.25 * lexical + 0.35 * semantic + 0.25 * graph + 0.15 * fact
-```
-
-Semantic has the highest weight because embeddings capture conceptual meaning that text and graph alone miss. A 4B model with excellent fact-aware retrieval outperforms a 35B model with mediocre context.
-
-### Usage
-
-```bash
-# Fast path (no LLM call, lexical+graph+fact only)
-curl -X POST http://localhost:7710/api/retrieve \
-  -d '{"query": "supplier lookup failure", "use_semantic": false}'
-
-# Full retrieval (includes embedding similarity)
-curl -X POST http://localhost:7710/api/retrieve \
-  -d '{"query": "cheap supplier", "use_semantic": true}'
-
-# Generate embeddings for all entities and claims
-curl -X POST http://localhost:7710/api/index \
-  -d '{"target_type": "all"}'
 ```
 
 ## Ingest Pipeline
@@ -175,13 +222,13 @@ Automated search→extract→classify→store→index pipeline that makes any we
 Query
   │
   ▼
-SearXNG (web search)
+SearXNG (pinned engines: Google, DuckDuckGo, Bing)
   │
   ▼
-Extract top N URLs (fetch_and_extract)
+Extract top N URLs (fetch_and_extract, SSRF-protected)
   │
   ▼
-0.8B Reflex → 4B Reasoning → 2B Attention (model ladder)
+Model probe → 0.8B Reflex (first responding model wins)
   ├─ Success: structured entities + claims from LLM
   └─ All fail: regex fallback (sentence extraction)
   │
@@ -199,18 +246,17 @@ Embeddings (nomic-embed-text) → retrievable via ContextRetriever
 
 ```bash
 # Full pipeline (search + extract + classify + embed)
-curl -X POST http://localhost:7710/api/ingest \
-  -d '{"query": "Raspberry Pi AI inference", "max_urls": 3}'
+search_ingest(query="Raspberry Pi AI inference", max_urls=3)
 
-# Skip LLM classification (regex only), no embeddings
-curl -X POST http://localhost:7710/api/ingest \
-  -d '{"query": "Python async patterns", "max_urls": 2, "classify": false, "index_embeddings": false}'
+# Background ingest
+queue_ingest(query="fastapi best practices", max_urls=3)
 
-# MCP tool
-search_ingest(query="fastapi best practices", max_urls=3)
+# RSS refresh
+rss_refresh()          # all feeds
+rss_refresh("ABC News")  # single feed
 ```
 
-## MCP Tools (32)
+## MCP Tools (40)
 
 | Category | Tools |
 |----------|-------|
@@ -218,13 +264,14 @@ search_ingest(query="fastapi best practices", max_urls=3)
 | Observation (2) | `list_observations`, `list_opportunities` |
 | Mission (3) | `create_mission`, `mission_status`, `execute_mission` |
 | Scientist (4) | `list_hypotheses`, `evaluate_hypothesis`, `list_predictions`, `suggest_experiments` |
-| Knowledge (4) | `get_entity`, `find_conflicts`, `recall_memories`, `export_to_tome` |
+| Knowledge (5) | `get_entity`, `find_conflicts`, `latest`, `recall_memories`, `export_to_tome` |
 | Skills (2) | `list_skills`, `execute_skill` |
-| Utility (1) | `query_utility` |
-| Router (1) | `route` |
+| Utility (2) | `query_utility`, `route` |
 | Search (3) | `search`, `browse`, `extract` |
 | Ingest (1) | `search_ingest` |
 | Retriever (3) | `retrieve`, `index_embeddings`, `embedding_status` |
+| Queue (4) | `queue_search`, `queue_ingest`, `queue_status`, `queue_cancel` |
+| RSS (3) | `rss_feeds`, `rss_refresh`, `rss_articles` |
 
 ## MCP Setup
 
@@ -247,8 +294,10 @@ All via `SEARCHV2_` prefix environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SEARCHV2_PORT` | 7710 | HTTP port |
+| `SEARCHV2_SECRET_KEY` | auto-generated | Bearer token for API auth |
 | `SEARCHV2_OLLAMA_BASE_URL` | `http://100.84.161.63:11434` | Ollama API |
 | `SEARCHV2_SEARXNG_URL` | `http://100.84.161.63:8888` | SearXNG |
+| `SEARCHV2_SEARXNG_ENGINES` | `google,duckduckgo,bing` | Pinned search engines |
 | `SEARCHV2_MODEL_REFLEX` | `qwen3.5:0.8b` | 0.8B model |
 | `SEARCHV2_MODEL_ATTENTION` | `qwen3.5:2b` | 2B model |
 | `SEARCHV2_MODEL_REASONING` | `qwen3.5:4b` | 4B model |
@@ -257,6 +306,10 @@ All via `SEARCHV2_` prefix environment variables:
 | `SEARCHV2_AUTO_ACCEPT_UTILITY_THRESHOLD` | 10.0 | Auto-accept opportunities |
 | `SEARCHV2_RE_VERIFICATION_THRESHOLD` | 0.5 | Re-verify decayed claims |
 | `SEARCHV2_SKILL_DETECTION_THRESHOLD` | 5 | Claims needed for skill generation |
+| `SEARCHV2_RSS_POLL_INTERVAL` | 3600 | RSS poll interval (seconds) |
+| `SEARCHV2_RSS_MAX_RETRIES` | 3 | Failed article retry limit |
+| `SEARCHV2_RSS_DISABLE_AFTER_ERRORS` | 10 | Consecutive errors before feed disabled |
+| `SEARCHV2_QUEUE_POLL_INTERVAL` | 2.0 | Queue poll interval (seconds) |
 
 ## Confidence Decay
 

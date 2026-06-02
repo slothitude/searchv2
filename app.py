@@ -3,13 +3,16 @@ from fastapi import FastAPI
 from config import settings
 
 from models.base import init_db
+from core.queue import worker as queue_worker
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     await init_db()
+    await queue_worker.start()
     yield
+    await queue_worker.stop()
 
 
 app = FastAPI(title="SearchV2", version="0.1.0", lifespan=lifespan)

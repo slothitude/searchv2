@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     mcp_host: str = "0.0.0.0"
     mcp_port: int = 7711
 
+    # Queue
+    queue_enabled: bool = True
+    queue_poll_interval: float = 2.0
+
     # Auth
     secret_key: str = "searchv2-dev-secret-change-me"
     bootstrap_token: str = ""

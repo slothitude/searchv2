@@ -14,6 +14,8 @@ class Entity(Base):
     name = Column(String(512), unique=True, nullable=False, index=True)
     entity_type = Column(String(128), default="thing")  # organization, technology, person, concept, service
     description = Column(Text, default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     relationships_from = relationship("Relationship", foreign_keys="Relationship.from_entity_id", back_populates="from_entity")
     relationships_to = relationship("Relationship", foreign_keys="Relationship.to_entity_id", back_populates="to_entity")
@@ -92,6 +94,8 @@ class Claim(Base):
     last_verified = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     decay_rate = Column(Float, default=0.001)  # per day
     disputed = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     entity = relationship("Entity", back_populates="claims")
 

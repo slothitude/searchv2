@@ -16,10 +16,12 @@ class KnowledgeGraph:
         self, name: str, entity_type: str = "thing", description: str = ""
     ) -> Entity:
         existing = await self.get_entity(name)
+        now = datetime.now(timezone.utc)
         if existing:
             if description and not existing.description:
                 existing.description = description
-                await self.db.flush()
+            existing.updated_at = now
+            await self.db.flush()
             return existing
 
         entity = Entity(name=name, entity_type=entity_type, description=description)
@@ -106,6 +108,7 @@ class KnowledgeGraph:
             claim.claim_value = claim_value
             claim.evidence_count += 1
             claim.last_verified = datetime.now(timezone.utc)
+            claim.updated_at = datetime.now(timezone.utc)
         else:
             claim = Claim(
                 entity_id=entity.id,
@@ -217,6 +220,69 @@ class KnowledgeGraph:
              "description": e.description}
             for e in result.scalars()
         ]
+
+    async def latest(self, query: str = "", hours: int = 72, limit: int = 20) -> list[dict]:
+        """Get recently updated entities and their latest claims.
+
+        Args:
+            query: optional text filter (ilike on entity name / claim key+value)
+            hours: how far back to look (default 72h)
+            limit: max entities to return
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Build base query for entities updated recently
+        ent_q = (
+            select(Entity)
+            .where(Entity.updated_at >= cutoff)
+            .order_by(desc(Entity.updated_at))
+            .limit(limit * 3)  # over-fetch, filter after claim join
+        )
+        entities = (await self.db.execute(ent_q)).scalars().all()
+
+        if query:
+            pattern = f"%{query}%"
+            entities = [
+                e for e in entities
+                if query.lower() in e.name.lower()
+                or (e.description and query.lower() in e.description.lower())
+            ]
+
+        entities = entities[:limit]
+
+        # Batch-fetch claims for these entities
+        out = []
+        for e in entities:
+            claims_q = (
+                select(Claim)
+                .where(Claim.entity_id == e.id)
+                .order_by(desc(Claim.updated_at))
+                .limit(5)
+            )
+            claims = (await self.db.execute(claims_q)).scalars().all()
+
+            claim_dicts = []
+            for c in claims:
+                if query and query.lower() not in c.claim_key.lower() and query.lower() not in c.claim_value.lower():
+                    continue
+                claim_dicts.append({
+                    "id": c.id,
+                    "key": c.claim_key,
+                    "value": c.claim_value[:200],
+                    "confidence": c.confidence,
+                    "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+                })
+
+            if claim_dicts or not query:
+                out.append({
+                    "entity": e.name,
+                    "type": e.entity_type,
+                    "description": e.description[:200] if e.description else "",
+                    "updated_at": e.updated_at.isoformat() if e.updated_at else None,
+                    "claims": claim_dicts,
+                })
+
+        return out
 
 
 class MemoryStore:

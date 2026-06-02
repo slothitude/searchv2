@@ -16,6 +16,8 @@ from core.extractor import fetch_and_extract
 from core.router import Router, Tier
 from core.retriever import ContextRetriever
 from core.ingest import ingest
+from core.queue import worker as queue_worker
+from models.queue import QueueStore
 
 mcp = FastMCP("SearchV2", instructions="Knowledge acquisition system with Tome vault, observation, missions, knowledge graph, multi-layer retrieval, and skills.")
 
@@ -243,6 +245,17 @@ async def find_conflicts() -> str:
 
 
 @mcp.tool()
+async def latest(query: str = "", hours: int = 72, limit: int = 20) -> str:
+    """Get recently ingested/updated entities and their latest claims. Use for 'latest news', 'latest AI stuff', etc. Optionally filter by query text. Default: last 72 hours."""
+    async with async_session() as db:
+        kg = KnowledgeGraph(db)
+        results = await kg.latest(query=query or None, hours=hours, limit=limit)
+        if not results:
+            return f"No recent knowledge{f' matching \"{query}\"' if query else ''}"
+        return json.dumps(results, indent=2, default=str)
+
+
+@mcp.tool()
 async def recall_memories(entity: str, limit: int = 10) -> str:
     """Recall episodic memories related to an entity."""
     async with async_session() as db:
@@ -416,9 +429,66 @@ async def embedding_status() -> str:
         }, indent=2)
 
 
+# ── Queue (4 tools) ─────────────────────────────────────────
+
+_store = QueueStore()
+
+
+@mcp.tool()
+async def queue_search(query: str, categories: str = "general",
+                       max_results: int = 10, priority: float = 0.5) -> str:
+    """Enqueue a search job. Returns job ID immediately — job runs in background."""
+    job = await _store.enqueue("search", query,
+                               params={"categories": categories, "max_results": max_results},
+                               priority=priority)
+    return json.dumps({"job_id": job.id, "status": "queued", "query": query})
+
+
+@mcp.tool()
+async def queue_ingest(query: str, max_urls: int = 3, classify: bool = True,
+                       index_embeddings: bool = True, priority: float = 0.5) -> str:
+    """Enqueue a full ingest job (search→extract→classify→store→index). Returns job ID immediately."""
+    job = await _store.enqueue("ingest", query,
+                               params={"max_urls": max_urls, "classify": classify,
+                                       "index_embeddings": index_embeddings},
+                               priority=priority)
+    return json.dumps({"job_id": job.id, "status": "queued", "query": query})
+
+
+@mcp.tool()
+async def queue_status(job_id: int = 0) -> str:
+    """List all jobs or get specific job status/result."""
+    if job_id:
+        job = await _store.get_job(job_id)
+        if not job:
+            return f"Job not found: {job_id}"
+        return json.dumps({
+            "id": job.id,
+            "job_type": job.job_type,
+            "query": job.query,
+            "status": job.status,
+            "result": json.loads(job.result) if job.result else None,
+            "error": job.error,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        }, indent=2, default=str)
+    jobs = await _store.list_jobs()
+    return json.dumps(jobs, indent=2, default=str)
+
+
+@mcp.tool()
+async def queue_cancel(job_id: int) -> str:
+    """Cancel a pending job."""
+    ok = await _store.cancel_job(job_id)
+    if ok:
+        return f"Cancelled job #{job_id}"
+    return f"Cannot cancel job #{job_id} (not pending or not found)"
+
+
 if __name__ == "__main__":
     import sys
     asyncio.run(init_db())
+    asyncio.run(queue_worker.start())
 
     # stdio when spawned by Claude Code, streamable-http when run standalone
     if "--stdio" in sys.argv:

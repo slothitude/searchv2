@@ -210,7 +210,7 @@ curl -X POST http://localhost:7710/api/ingest \
 search_ingest(query="fastapi best practices", max_urls=3)
 ```
 
-## MCP Tools (30)
+## MCP Tools (32)
 
 | Category | Tools |
 |----------|-------|
@@ -225,6 +225,20 @@ search_ingest(query="fastapi best practices", max_urls=3)
 | Search (3) | `search`, `browse`, `extract` |
 | Ingest (1) | `search_ingest` |
 | Retriever (3) | `retrieve`, `index_embeddings`, `embedding_status` |
+
+## MCP Setup
+
+Claude Code auto-spawns the server via stdio transport:
+
+```bash
+claude mcp add -s user searchv2 -- C:/Python313/python.exe /path/to/searchv2/mcp_server.py --stdio
+```
+
+Standalone HTTP mode (port 7711):
+
+```bash
+python mcp_server.py  # no --stdio flag
+```
 
 ## Configuration
 

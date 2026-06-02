@@ -11,8 +11,10 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.knowledge import (
-    Entity, Relationship, Claim, Memory, Hypothesis, Evidence, Embedding
+    Entity, Relationship, Claim, Memory, Hypothesis, Evidence, Embedding,
+    Contradiction,
 )
+from config import settings
 from core.ollama import call_ollama
 
 
@@ -512,11 +514,64 @@ class ContextRetriever:
 
     # ── Main retrieve ────────────────────────────────────────
 
+    async def _enrich_belief(self, results: list[dict]) -> None:
+        """Add effective_confidence, disputed, decay, and contradiction flags to claim results."""
+        claim_ids = [r["id"] for r in results if r.get("type") == "claim"]
+        if not claim_ids:
+            return
+
+        now = datetime.now(timezone.utc)
+
+        # Batch-fetch all claims
+        r = await self.db.execute(
+            select(Claim).where(Claim.id.in_(claim_ids))
+        )
+        claim_map: dict[int, Claim] = {c.id: c for c in r.scalars()}
+
+        # Batch-fetch active contradictions for these claims
+        r = await self.db.execute(
+            select(Contradiction.claim_a_id, Contradiction.claim_b_id, Contradiction.severity, Contradiction.contradiction_type).where(
+                Contradiction.resolved.is_(False),
+                (Contradiction.claim_a_id.in_(claim_ids) | Contradiction.claim_b_id.in_(claim_ids))
+            )
+        )
+        contradictions: dict[int, list[dict]] = {}
+        for a_id, b_id, severity, ctype in r.all():
+            for cid in (a_id, b_id):
+                if cid not in contradictions:
+                    contradictions[cid] = []
+                contradictions[cid].append({"severity": severity, "type": ctype})
+
+        # Enrich each claim result
+        for result in results:
+            if result.get("type") != "claim":
+                continue
+            claim = claim_map.get(result["id"])
+            if not claim:
+                continue
+
+            dt = claim.last_verified
+            if dt and dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if not dt:
+                dt = now
+            days = (now - dt).total_seconds() / 86400
+            effective = claim.confidence * math.exp(-claim.decay_rate * days)
+
+            result["effective_confidence"] = round(effective, 4)
+            result["disputed"] = claim.disputed
+            result["decayed"] = effective < settings.re_verification_threshold
+            result["evidence_count"] = claim.evidence_count
+
+            if claim.id in contradictions:
+                result["contradictions"] = contradictions[claim.id]
+
     async def retrieve(
         self,
         query: str,
         limit: int = 20,
         use_semantic: bool = True,
+        include_belief: bool = False,
     ) -> dict:
         """Full multi-layer retrieval with reranking.
 
@@ -524,6 +579,8 @@ class ContextRetriever:
             query: Search query
             limit: Max results
             use_semantic: Whether to use embedding search (slower, needs nomic-embed-text)
+            include_belief: If True, claim results include effective_confidence,
+                disputed flag, decay status, and active contradictions.
 
         Returns:
             Dict with results, expansion info, and per-layer counts.
@@ -561,6 +618,10 @@ class ContextRetriever:
         # Rerank
         ranked = self._rerank(lexical, semantic, graph, facts)
         ranked = ranked[:limit]
+
+        # Enrich with belief data if requested
+        if include_belief:
+            await self._enrich_belief(ranked)
 
         return {
             "query": query,

@@ -10,6 +10,7 @@ class RetrieveRequest(BaseModel):
     query: str
     limit: int = 20
     use_semantic: bool = True
+    include_belief: bool = False
 
 
 class IndexRequest(BaseModel):
@@ -29,6 +30,7 @@ async def retrieve(body: RetrieveRequest, deps=Depends(get_retriever)):
         query=body.query,
         limit=body.limit,
         use_semantic=body.use_semantic,
+        include_belief=body.include_belief,
     )
     return result
 

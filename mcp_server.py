@@ -407,11 +407,13 @@ async def search_ingest(query: str, max_urls: int = 3, classify: bool = True,
 # ── Retriever (3 tools) ─────────────────────────────────────
 
 @mcp.tool()
-async def retrieve(query: str, limit: int = 10, use_semantic: bool = True) -> str:
-    """Multi-layer conceptual search across entities, claims, documents, and hypotheses. Combines lexical, semantic (embeddings), graph (relationship traversal), and fact search with reranking. use_semantic=false for instant results without LLM calls."""
+async def retrieve(query: str, limit: int = 10, use_semantic: bool = True,
+                 include_belief: bool = False) -> str:
+    """Multi-layer conceptual search across entities, claims, documents, and hypotheses. Combines lexical, semantic (embeddings), graph (relationship traversal), and fact search with reranking. use_semantic=false for instant results without LLM calls. include_belief=true to add effective_confidence, disputed, decay status, and contradictions to claim results."""
     async with async_session() as db:
         retriever = ContextRetriever(db)
-        result = await retriever.retrieve(query, limit=limit, use_semantic=use_semantic)
+        result = await retriever.retrieve(query, limit=limit, use_semantic=use_semantic,
+                                         include_belief=include_belief)
         return json.dumps(result, indent=2, default=str)
 
 

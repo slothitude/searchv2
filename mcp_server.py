@@ -17,9 +17,10 @@ from core.router import Router, Tier
 from core.retriever import ContextRetriever
 from core.ingest import ingest
 from core.queue import worker as queue_worker
+from core.rss import store as rss_store, fetch_all, ingest_uningested, poller as rss_poller
 from models.queue import QueueStore
 
-mcp = FastMCP("SearchV2", instructions="Knowledge acquisition system with Tome vault, observation, missions, knowledge graph, multi-layer retrieval, and skills.")
+mcp = FastMCP("SearchV2", instructions="Knowledge acquisition system with Tome vault, observation, missions, knowledge graph, multi-layer retrieval, skills, and RSS feeds.")
 
 
 # ── Tome (5 tools) ──────────────────────────────────────────
@@ -485,10 +486,54 @@ async def queue_cancel(job_id: int) -> str:
     return f"Cannot cancel job #{job_id} (not pending or not found)"
 
 
+# ── RSS (3 tools) ─────────────────────────────────────────
+
+@mcp.tool()
+async def rss_feeds() -> str:
+    """List configured RSS feeds with last-fetch time and article count."""
+    feeds = await rss_store.list_feeds()
+    return json.dumps(feeds, indent=2)
+
+
+@mcp.tool()
+async def rss_refresh(feed_name: str = "") -> str:
+    """Trigger manual fetch of one feed or all feeds. Returns article counts."""
+    if feed_name:
+        feed = await rss_store.get_feed_by_name(feed_name)
+        if not feed:
+            return f"Feed not found: {feed_name}"
+        # Fetch just this feed by temporarily disabling others
+        from core.rss import fetch_feed
+        articles = await fetch_feed(feed.url)
+        new_count = 0
+        for a in articles:
+            if a.get("title") and a.get("url"):
+                is_new = await rss_store.save_article(
+                    feed.id, a["title"], a["url"],
+                    summary=a.get("summary", ""),
+                    published_at=a.get("published_at"),
+                )
+                if is_new:
+                    new_count += 1
+        await rss_store.update_feed_fetched(feed.id)
+        result = {"feed": feed_name, "total": len(articles), "new": new_count}
+    else:
+        result = await fetch_all()
+    return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool()
+async def rss_articles(feed_name: str = "", limit: int = 20) -> str:
+    """List recent RSS articles, optionally filtered by feed."""
+    articles = await rss_store.list_articles(feed_name=feed_name, limit=limit)
+    return json.dumps(articles, indent=2, default=str) if articles else "No articles"
+
+
 if __name__ == "__main__":
     import sys
     asyncio.run(init_db())
     asyncio.run(queue_worker.start())
+    asyncio.run(rss_poller.start())
 
     # stdio when spawned by Claude Code, streamable-http when run standalone
     if "--stdio" in sys.argv:

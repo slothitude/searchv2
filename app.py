@@ -4,6 +4,7 @@ from config import settings
 
 from models.base import init_db
 from core.queue import worker as queue_worker
+from core.rss import poller as rss_poller
 
 
 @asynccontextmanager
@@ -11,7 +12,9 @@ async def lifespan(app: FastAPI):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     await init_db()
     await queue_worker.start()
+    await rss_poller.start()
     yield
+    await rss_poller.stop()
     await queue_worker.stop()
 
 

@@ -24,6 +24,7 @@ class Settings(BaseSettings):
 
     # SearXNG
     searxng_url: str = "http://100.84.161.63:8888"
+    searxng_engines: str = "google,duckduckgo,bing"  # comma-separated, pinned engines
 
     # Swarm
     swarm_name: str = ""
@@ -55,6 +56,21 @@ class Settings(BaseSettings):
     # Auth
     secret_key: str = "searchv2-dev-secret-change-me"
     bootstrap_token: str = ""
+
+    # RSS
+    rss_feeds: dict = {
+        "ABC News": "https://www.abc.net.au/news/feed/51120/rss.xml",
+        "ABC Just In": "https://www.abc.net.au/news/feed/46182/rss.xml",
+        "Guardian Australia": "https://www.theguardian.com/au/rss",
+        "Google News AU": "https://news.google.com/rss?hl=en-AU&gl=AU&ceid=AU:en",
+        "SBS News": "https://www.sbs.com.au/news/feed",
+        "Sky News AU": "https://feeds.skynews.com.au/rss.xml",
+        "9News": "https://feeds.9news.com.au/rss",
+        "SMH": "https://www.smh.com.au/rss/headlines.xml",
+        "The Age": "https://www.theage.com.au/rss/headlines.xml",
+        "news.com.au": "https://www.news.com.au/rss",
+    }
+    rss_poll_interval: int = 3600  # seconds between RSS polls
 
     model_config = {"env_prefix": "SEARCHV2_"}
 

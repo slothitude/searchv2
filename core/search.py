@@ -6,16 +6,22 @@ async def search_searxng(
     query: str,
     categories: str = "general",
     max_results: int = 10,
+    engines: str | None = None,
 ) -> list[dict]:
-    """Search via SearXNG."""
+    """Search via SearXNG. Uses pinned engines from config by default."""
+    if engines is None:
+        engines = settings.searxng_engines
     async with httpx.AsyncClient(timeout=30) as client:
+        params = {
+            "q": query,
+            "format": "json",
+            "categories": categories,
+        }
+        if engines:
+            params["engines"] = engines
         resp = await client.get(
             settings.searxng_url + "/search",
-            params={
-                "q": query,
-                "format": "json",
-                "categories": categories,
-            },
+            params=params,
         )
         resp.raise_for_status()
         data = resp.json()

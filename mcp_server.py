@@ -417,7 +417,13 @@ async def embedding_status() -> str:
 
 
 if __name__ == "__main__":
+    import sys
     asyncio.run(init_db())
-    mcp.settings.host = "0.0.0.0"
-    mcp.settings.port = 7711
-    mcp.run(transport="streamable-http")
+
+    # stdio when spawned by Claude Code, streamable-http when run standalone
+    if "--stdio" in sys.argv:
+        mcp.run(transport="stdio")
+    else:
+        mcp.settings.host = "0.0.0.0"
+        mcp.settings.port = 7711
+        mcp.run(transport="streamable-http")

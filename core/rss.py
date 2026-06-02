@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 
 import feedparser
@@ -19,36 +20,38 @@ log = logging.getLogger("searchv2.rss")
 
 store = FeedStore()
 
+# Cache the working model across articles in a single batch
+_cached_model: str | None = None
+
+
+def _parse_published(entry) -> datetime | None:
+    """Parse published/updated date from a feedparser entry."""
+    raw = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
+    if not raw:
+        return None
+    try:
+        # struct_time -> datetime (entry.published_parsed is a time.struct_time)
+        return datetime.fromtimestamp(
+            int(feedparser._parse_date(raw).timestamp()), tz=timezone.utc
+        )
+    except Exception:
+        return None
+
 
 async def fetch_feed(feed_url: str) -> list[dict]:
     """Parse an RSS feed and return list of article dicts."""
     try:
-        # feedparser is synchronous — run in thread pool
         def _parse():
             return feedparser.parse(feed_url)
 
         parsed = await asyncio.get_event_loop().run_in_executor(None, _parse)
         articles = []
         for entry in parsed.entries:
-            published = None
-            if hasattr(entry, "published_parsed") and entry.published_parsed:
-                try:
-                    from email.utils import parsedate_to_datetime
-                    published = parsedate_to_datetime(entry.published_parsed)
-                except Exception:
-                    pass
-            elif hasattr(entry, "updated_parsed") and entry.updated_parsed:
-                try:
-                    from email.utils import parsedate_to_datetime
-                    published = parsedate_to_datetime(entry.updated_parsed)
-                except Exception:
-                    pass
-
             articles.append({
                 "title": entry.get("title", "").strip(),
                 "url": entry.get("link", "").strip(),
                 "summary": entry.get("summary", "") or entry.get("description", ""),
-                "published_at": published,
+                "published_at": _parse_published(entry),
             })
         return articles
     except Exception as e:
@@ -65,34 +68,46 @@ async def fetch_all() -> dict:
 
     total_new = 0
     results = []
-    for feed in feeds:
-        try:
-            articles = await fetch_feed(feed.url)
-            new_count = 0
-            for a in articles:
-                if a.get("title") and a.get("url"):
-                    is_new = await store.save_article(
-                        feed.id, a["title"], a["url"],
-                        summary=a.get("summary", ""),
-                        published_at=a.get("published_at"),
-                    )
-                    if is_new:
-                        new_count += 1
-            await store.update_feed_fetched(feed.id, error=False)
-            total_new += new_count
-            results.append({"feed": feed.name, "total": len(articles), "new": new_count})
-            log.info("Feed '%s': %d articles, %d new", feed.name, len(articles), new_count)
-        except Exception as e:
+    # Fetch feeds concurrently
+    feed_articles = await asyncio.gather(
+        *[fetch_feed(f.url) for f in feeds], return_exceptions=True,
+    )
+    for feed, outcome in zip(feeds, feed_articles):
+        if isinstance(outcome, Exception):
             await store.update_feed_fetched(feed.id, error=True)
-            log.error("Error fetching feed '%s': %s", feed.name, e)
-            results.append({"feed": feed.name, "error": str(e)})
+            log.error("Error fetching feed '%s': %s", feed.name, outcome)
+            results.append({"feed": feed.name, "error": str(outcome)})
+            continue
+
+        articles = outcome
+        new_count = 0
+        for a in articles:
+            if a.get("title") and a.get("url"):
+                is_new = await store.save_article(
+                    feed.id, a["title"], a["url"],
+                    summary=a.get("summary", ""),
+                    published_at=a.get("published_at"),
+                )
+                if is_new:
+                    new_count += 1
+        await store.update_feed_fetched(feed.id, error=False)
+        total_new += new_count
+        results.append({"feed": feed.name, "total": len(articles), "new": new_count})
+        log.info("Feed '%s': %d articles, %d new", feed.name, len(articles), new_count)
 
     return {"feeds_processed": len(results), "total_new": total_new, "details": results}
+
+
+def set_model_cache(model: str | None):
+    """Set/clear the cached working model for batch processing."""
+    global _cached_model
+    _cached_model = model
 
 
 async def ingest_article(article: RSSArticle) -> bool:
     """Extract text from article URL and run through ingest pipeline."""
     from core.retriever import ContextRetriever
+    from models.knowledge import Entity
 
     try:
         content = await fetch_and_extract(article.url)
@@ -108,13 +123,15 @@ async def ingest_article(article: RSSArticle) -> bool:
             ms = MemoryStore(db)
             retriever = ContextRetriever(db)
 
-            # Use reflex model if available for extraction
-            model = await _find_working_model(timeout=10)
+            # Use cached model or probe once
+            model = _cached_model
+            if model is None:
+                model = await _find_working_model(timeout=10)
+                set_model_cache(model)
 
             if model:
                 knowledge = await _extract_knowledge(text, url, model=model)
             else:
-                # Basic: one entity per article with title + summary
                 knowledge = [{
                     "entity": article.title,
                     "type": "news",
@@ -124,6 +141,7 @@ async def ingest_article(article: RSSArticle) -> bool:
                     ],
                 }]
 
+            ingested_entities = []
             for item in knowledge:
                 entity_name = _clean_entity_name(item.get("entity", ""), url=url)
                 entity_type = item.get("type", "document")
@@ -146,21 +164,23 @@ async def ingest_article(article: RSSArticle) -> bool:
                         confidence=max(0.1, min(1.0, conf)),
                     )
 
-            # Index embeddings for the entity
-            from models.knowledge import Entity
-            r = await db.execute(select(Entity).where(Entity.name == entity_name).limit(1))
-            ent = r.scalar_one_or_none()
-            if ent:
-                if not await retriever.has_embedding("entity", ent.id):
-                    await retriever.index_entity(ent.id)
-                await retriever.index_claims_for_entity(ent.id)
+                # Index embeddings for each entity (not just the last)
+                r = await db.execute(select(Entity).where(Entity.name == entity_name).limit(1))
+                ent = r.scalar_one_or_none()
+                if ent:
+                    if not await retriever.has_embedding("entity", ent.id):
+                        await retriever.index_entity(ent.id)
+                    await retriever.index_claims_for_entity(ent.id)
 
-            await ms.add_memory(
-                content=f"RSS ingest: {article.title}",
-                context=f"feed: {article.url}",
-                related_entities=[entity_name],
-                importance=0.5,
-            )
+                ingested_entities.append(entity_name)
+
+            if ingested_entities:
+                await ms.add_memory(
+                    content=f"RSS ingest: {article.title}",
+                    context=f"feed: {article.url}",
+                    related_entities=ingested_entities,
+                    importance=0.5,
+                )
             await db.commit()
 
         await store.mark_ingested(article.id)
@@ -192,7 +212,6 @@ class RSSPoller:
         self._task: asyncio.Task | None = None
 
     async def start(self):
-        # Seed configured feeds
         await store.init_feeds(settings.rss_feeds)
         self._task = asyncio.create_task(self._loop())
         log.info("RSS poller started (interval %ds)", settings.rss_poll_interval)
@@ -208,18 +227,15 @@ class RSSPoller:
             log.info("RSS poller stopped")
 
     async def _loop(self):
-        # Small delay before first poll so other startup tasks finish
         await asyncio.sleep(5)
         queue = QueueStore()
         while True:
             try:
-                # Fetch all feeds
                 summary = await fetch_all()
                 log.info("RSS poll: %d feeds, %d new articles",
                          summary.get("feeds_processed", 0),
                          summary.get("total_new", 0))
 
-                # Enqueue uningested articles for the queue worker to process
                 if summary.get("total_new", 0) > 0:
                     articles = await store.get_uningested(limit=10)
                     enqueued = 0
@@ -229,12 +245,10 @@ class RSSPoller:
                             f"RSS: {article.title[:80]}",
                             params={"article_id": article.id, "url": article.url,
                                     "title": article.title},
-                            priority=0.3,  # lower priority than manual jobs
+                            priority=0.3,
                         )
                         enqueued += 1
                     log.info("RSS: enqueued %d articles for ingest", enqueued)
-
-                    # Self-learning: extract key topics from titles and queue follow-up searches
                     await self._enqueue_followup_searches(articles, queue)
 
             except asyncio.CancelledError:
@@ -246,17 +260,12 @@ class RSSPoller:
 
     async def _enqueue_followup_searches(self, articles, queue):
         """Extract interesting topics from article titles and queue search jobs."""
-        import re
-        # Deduplicate topics
         topics_seen = set()
         for article in articles:
             title = article.title
-            # Extract quoted phrases and capitalized multi-word terms
             candidates = set()
-            # Quoted phrases
             for m in re.finditer(r'"([^"]+)"', title):
                 candidates.add(m.group(1).strip())
-            # Capitalized 2-3 word phrases
             for m in re.finditer(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b', title):
                 phrase = m.group(1)
                 if len(phrase) >= 5 and phrase.lower() not in (
@@ -274,7 +283,7 @@ class RSSPoller:
                     "rss_search",
                     f"RSS follow-up: {topic}",
                     params={"query": query, "max_urls": 2},
-                    priority=0.2,  # lowest priority
+                    priority=0.2,
                 )
                 log.info("RSS self-learning: queued search for '%s'", topic)
 

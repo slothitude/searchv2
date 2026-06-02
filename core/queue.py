@@ -90,23 +90,19 @@ class QueueWorker:
 
             elif job.job_type == "rss_ingest":
                 # Ingest a single RSS article by URL
-                from models.rss import RSSArticle
                 article_id = params.get("article_id")
                 url = params.get("url")
                 async with async_session() as db:
-                    article = (await db.execute(
-                        select(RSSArticle).where(RSSArticle.id == article_id)
-                    )).scalar_one_or_none() if article_id else None
-                if not article and url:
-                    from models.rss import FeedStore as FS
-                    fs = FS()
-                    found = await fs.list_articles(limit=500)
-                    match = [a for a in found if a["url"] == url]
-                    if match:
-                        async with async_session() as db:
-                            article = (await db.execute(
-                                select(RSSArticle).where(RSSArticle.id == match[0]["id"])
-                            )).scalar_one_or_none()
+                    if article_id:
+                        article = (await db.execute(
+                            select(RSSArticle).where(RSSArticle.id == article_id)
+                        )).scalar_one_or_none()
+                    elif url:
+                        article = (await db.execute(
+                            select(RSSArticle).where(RSSArticle.url == url)
+                        )).scalar_one_or_none()
+                    else:
+                        article = None
                 if article:
                     ok = await ingest_article(article)
                     await self.store.update_status(job.id, "done",
